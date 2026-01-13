@@ -1,12 +1,9 @@
 /**
- * Cloudflare Worker 多项目部署管理器 (自动更新增强版)
- * * 功能清单：
- * 1. [核心] 自动拉取 GitHub 代码 (beta2.0 / main)。
- * 2. [Token] 支持 GITHUB_TOKEN 环境变量。
- * 3. [检测] 实时对比上游版本，界面显示 "🔴 有新版本" 提示。
- * 4. [分流] CMliu/Joey 项目独立管理，配置互不干扰。
- * 5. [自动化] 支持定时检查 GitHub 更新并自动部署 (需配置 Cron)。
- * 6. [隐私] 账号列表支持折叠/展开。
+ * Cloudflare Worker 多项目部署管理器 (V3.2 Classic UI + New Core)
+ * * 版本特性：
+ * 1. [界面] 回归经典的左右分栏卡片式 UI (V2.6 风格)。
+ * 2. [内核] 采用 V3.0 的 Billing 统计接口 (Workers + Pages)，解决 unknown field 错误。
+ * 3. [功能] 每日 10w 请求额度监控 (UTC 0点重置)，支持自动更新。
  */
 
 // ==========================================
@@ -25,7 +22,6 @@ const TEMPLATES = {
     name: "Joey - 少年你相信光吗",
     scriptUrl: "https://raw.githubusercontent.com/byJoey/cfnew/main/%E5%B0%91%E5%B9%B4%E4%BD%A0%E7%9B%B8%E4%BF%A1%E5%85%89%E5%90%97",
     apiUrl: "https://api.github.com/repos/byJoey/cfnew/commits?path=%E5%B0%91%E5%B9%B4%E4%BD%A0%E7%9B%B8%E4%BF%A1%E5%85%89%E5%90%97&per_page=1",
-    // update: 添加了默认变量 'd'
     defaultVars: ["u", "d"],
     uuidField: "u",
     description: "Joey 项目 (自动修复版)"
@@ -33,7 +29,7 @@ const TEMPLATES = {
 };
 
 export default {
-  // ================= 定时任务 (Cron) 入口 =================
+  // ================= 定时任务 =================
   async scheduled(event, env, ctx) {
     ctx.waitUntil(handleCronJob(env));
   },
@@ -55,11 +51,9 @@ export default {
     const ACCOUNTS_KEY = `ACCOUNTS_UNIFIED_STORAGE`; 
     const VARS_KEY = `VARS_${type}`;                 
     const VERSION_KEY = `VERSION_INFO_${type}`; 
-    const AUTO_CONFIG_KEY = `AUTO_UPDATE_CFG_${type}`; // 新增：自动更新配置键名
+    const AUTO_CONFIG_KEY = `AUTO_UPDATE_CFG_${type}`; 
 
     // ================= API 路由 =================
-
-    // 1. 账号列表 (GET/POST)
     if (url.pathname === "/api/accounts") {
       if (request.method === "GET") {
         const list = await env.CONFIG_KV.get(ACCOUNTS_KEY) || "[]";
@@ -72,7 +66,6 @@ export default {
       }
     }
 
-    // 2. 变量配置 (GET/POST)
     if (url.pathname === "/api/settings") {
       if (request.method === "GET") {
         const vars = await env.CONFIG_KV.get(VARS_KEY);
@@ -85,7 +78,6 @@ export default {
       }
     }
 
-    // 3. 自动更新配置 (GET/POST) [新增]
     if (url.pathname === "/api/auto_config") {
       if (request.method === "GET") {
         const cfg = await env.CONFIG_KV.get(AUTO_CONFIG_KEY);
@@ -93,7 +85,6 @@ export default {
       }
       if (request.method === "POST") {
         const body = await request.json();
-        // 保存配置时，保留上次检查时间，避免重置
         const oldCfg = JSON.parse(await env.CONFIG_KV.get(AUTO_CONFIG_KEY) || "{}");
         body.lastCheck = oldCfg.lastCheck || 0; 
         await env.CONFIG_KV.put(AUTO_CONFIG_KEY, JSON.stringify(body));
@@ -101,16 +92,18 @@ export default {
       }
     }
 
-    // 4. 版本检测
     if (url.pathname === "/api/check_update") {
         return await handleCheckUpdate(env, type, VERSION_KEY);
     }
 
-    // 5. 执行部署
     if (url.pathname === "/api/deploy" && request.method === "POST") {
-      // 手动部署时，读取请求中的变量，不完全依赖KV
       const { variables } = await request.json(); 
       return await handleManualDeploy(env, type, variables, ACCOUNTS_KEY, VERSION_KEY);
+    }
+
+    // [核心升级] 流量统计接口 - 使用 Billing 逻辑
+    if (url.pathname === "/api/stats") {
+      return await handleStats(env, ACCOUNTS_KEY);
     }
 
     // ================= 页面渲染 =================
@@ -123,8 +116,100 @@ export default {
 };
 
 /**
- * 辅助：构造带有 GitHub Token 的请求头
+ * [内核升级] 获取流量统计
+ * 使用 Billing 接口，精准统计 Workers + Pages
  */
+async function handleStats(env, accountsKey) {
+  try {
+    const accounts = JSON.parse(await env.CONFIG_KV.get(accountsKey) || "[]");
+    if (accounts.length === 0) return new Response(JSON.stringify([]), { headers: { "Content-Type": "application/json" } });
+
+    // 计算时间窗口：从今天 UTC 00:00 (北京时间 08:00) 到现在
+    const now = new Date();
+    const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+    
+    // GraphQL Billing 查询 (兼容性最强)
+    const query = `
+      query getBillingMetrics($AccountID: String!, $filter: AccountWorkersInvocationsAdaptiveFilter_InputObject) {
+        viewer {
+          accounts(filter: {accountTag: $AccountID}) {
+            workersInvocationsAdaptive(limit: 10000, filter: $filter) {
+              sum {
+                requests
+              }
+            }
+            pagesFunctionsInvocationsAdaptiveGroups(limit: 1000, filter: $filter) {
+              sum {
+                requests
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const results = await Promise.all(accounts.map(async (acc) => {
+      try {
+        const res = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${acc.apiToken}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            query: query,
+            variables: {
+              AccountID: acc.accountId,
+              filter: {
+                datetime_geq: todayStart.toISOString(),
+                datetime_leq: now.toISOString()
+              }
+            }
+          })
+        });
+
+        if (!res.ok) {
+           return { alias: acc.alias, error: `API连接失败 (${res.status})` };
+        }
+
+        const data = await res.json();
+        
+        // 捕获 GraphQL 错误
+        if (data.errors && data.errors.length > 0) {
+            return { alias: acc.alias, error: `API Error: ${data.errors[0].message}` };
+        }
+
+        const accountData = data.data?.viewer?.accounts?.[0];
+        if (!accountData) {
+             return { alias: acc.alias, error: "无数据 (请检查Token Account资源范围)" };
+        }
+
+        // 聚合数据
+        const workers = accountData.workersInvocationsAdaptive?.reduce((a, b) => a + (b.sum.requests || 0), 0) || 0;
+        const pages = accountData.pagesFunctionsInvocationsAdaptiveGroups?.reduce((a, b) => a + (b.sum.requests || 0), 0) || 0;
+        const total = workers + pages;
+
+        return { 
+            alias: acc.alias, 
+            workers: workers,
+            pages: pages,
+            total: total,
+            max: 100000
+        };
+
+      } catch (e) {
+        return { alias: acc.alias, error: e.message };
+      }
+    }));
+
+    return new Response(JSON.stringify(results), { headers: { "Content-Type": "application/json" } });
+
+  } catch (e) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+  }
+}
+
+// ... (辅助函数保持不变) ...
 function getGithubHeaders(env) {
     const headers = { "User-Agent": "Cloudflare-Worker-Manager" };
     if (env.GITHUB_TOKEN && env.GITHUB_TOKEN.trim() !== "") {
@@ -133,116 +218,77 @@ function getGithubHeaders(env) {
     return headers;
 }
 
-/**
- * 核心逻辑：定时任务处理
- * 遍历所有项目模板，检查是否开启自动更新且达到时间间隔
- */
 async function handleCronJob(env) {
-    const logs = [];
     for (const type of Object.keys(TEMPLATES)) {
         const AUTO_CONFIG_KEY = `AUTO_UPDATE_CFG_${type}`;
         const configStr = await env.CONFIG_KV.get(AUTO_CONFIG_KEY);
         if (!configStr) continue;
-
         const config = JSON.parse(configStr);
-        // 检查开关和时间间隔
         if (!config.enabled) continue;
-
         const now = Date.now();
         const lastCheck = config.lastCheck || 0;
-        const intervalMs = (config.interval || 24) * 60 * 60 * 1000; // 小时转毫秒
-
+        const intervalMs = (config.interval || 24) * 60 * 60 * 1000;
         if (now - lastCheck > intervalMs) {
-            console.log(`[Cron] 正在检查 ${type} 更新...`);
-            
-            // 1. 检查版本
+            console.log(`[Cron] Checking ${type}...`);
             const VERSION_KEY = `VERSION_INFO_${type}`;
             const checkRes = await handleCheckUpdate(env, type, VERSION_KEY);
             const checkData = await checkRes.json();
-            
-            // 如果 GitHub 有新版本 (Remote SHA != Local SHA)
             if (checkData.remote && (!checkData.local || checkData.remote.sha !== checkData.local.sha)) {
-                console.log(`[Cron] 发现新版本，开始部署 ${type}...`);
-                
-                // 2. 读取已保存的变量
+                console.log(`[Cron] Updating ${type}...`);
                 const VARS_KEY = `VARS_${type}`; 
                 const varsStr = await env.CONFIG_KV.get(VARS_KEY);
                 const variables = varsStr ? JSON.parse(varsStr) : [];
-                
-                // 3. 执行部署
                 const ACCOUNTS_KEY = `ACCOUNTS_UNIFIED_STORAGE`;
                 await coreDeployLogic(env, type, variables, ACCOUNTS_KEY, VERSION_KEY);
             }
-            
-            // 4. 更新最后检查时间
             config.lastCheck = now;
             await env.CONFIG_KV.put(AUTO_CONFIG_KEY, JSON.stringify(config));
         }
     }
 }
 
-/**
- * 逻辑：检测更新 (API 返回)
- */
 async function handleCheckUpdate(env, type, versionKey) {
     try {
         const config = TEMPLATES[type];
         if(!config) return new Response(JSON.stringify({error: "Unknown type"}));
-
         const localDataStr = await env.CONFIG_KV.get(versionKey);
         const localData = localDataStr ? JSON.parse(localDataStr) : null;
-
         const ghRes = await fetch(config.apiUrl, { headers: getGithubHeaders(env) });
         if (!ghRes.ok) {
             if(ghRes.status === 403) throw new Error("GitHub API 频率超限");
             throw new Error(`GitHub API Error: ${ghRes.status}`);
         }
-        
         const ghData = await ghRes.json();
         const commitObj = Array.isArray(ghData) ? ghData[0] : ghData;
-        
         return new Response(JSON.stringify({
             local: localData,
             remote: { sha: commitObj.sha, date: commitObj.commit.committer.date, message: commitObj.commit.message }
         }), { headers: { "Content-Type": "application/json" } });
-
     } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500 });
     }
 }
 
-/**
- * 逻辑：手动触发部署
- */
 async function handleManualDeploy(env, type, variables, accountsKey, versionKey) {
     const logs = await coreDeployLogic(env, type, variables, accountsKey, versionKey);
     return new Response(JSON.stringify(logs), { headers: { "Content-Type": "application/json" } });
 }
 
-/**
- * 核心部署逻辑 (被 手动API 和 Cron 共用)
- */
 async function coreDeployLogic(env, type, variables, accountsKey, versionKey) {
     try {
         const templateConfig = TEMPLATES[type];
-        
-        // 1. 读取账号
         const accounts = JSON.parse(await env.CONFIG_KV.get(accountsKey) || "[]");
         if (accounts.length === 0) return [{ name: "提示", success: false, msg: "无账号配置" }];
         
-        // 2. 拉取代码 & 版本
         let githubScriptContent = "";
         let currentSha = "";
-        
         try {
             const [codeRes, apiRes] = await Promise.all([
                 fetch(templateConfig.scriptUrl),
                 fetch(templateConfig.apiUrl, { headers: getGithubHeaders(env) })
             ]);
-
             if (!codeRes.ok) throw new Error(`代码下载失败: ${codeRes.status}`);
             githubScriptContent = await codeRes.text();
-
             if (apiRes.ok) {
                 const apiData = await apiRes.json();
                 const commitObj = Array.isArray(apiData) ? apiData[0] : apiData;
@@ -252,30 +298,21 @@ async function coreDeployLogic(env, type, variables, accountsKey, versionKey) {
             return [{ name: "网络错误", success: false, msg: "GitHub连接失败: " + e.message }];
         }
 
-        // 3. 注入补丁
-        if (type === 'joey') {
-            githubScriptContent = 'var window = globalThis;\n' + githubScriptContent;
-        }
+        if (type === 'joey') githubScriptContent = 'var window = globalThis;\n' + githubScriptContent;
 
-        // 4. 遍历部署
         const logs = [];
         let updateCount = 0;
-        
         for (const acc of accounts) {
           const targetWorkers = acc[`workers_${type}`] || [];
           if (!Array.isArray(targetWorkers) || targetWorkers.length === 0) continue;
-
           for (const wName of targetWorkers) {
               updateCount++;
               const logItem = { name: `${acc.alias} -> [${wName}]`, success: false, msg: "" };
-              
               try {
                 const baseUrl = `https://api.cloudflare.com/client/v4/accounts/${acc.accountId}/workers/scripts/${wName}`;
                 const headers = { "Authorization": `Bearer ${acc.apiToken}` };
-
                 const bindingsRes = await fetch(`${baseUrl}/bindings`, { headers });
                 const currentBindings = bindingsRes.ok ? (await bindingsRes.json()).result : [];
-
                 if (variables && variables.length > 0) {
                     for (const newVar of variables) {
                         if (newVar.value && newVar.value.trim() !== "") {
@@ -285,14 +322,11 @@ async function coreDeployLogic(env, type, variables, accountsKey, versionKey) {
                         }
                     }
                 }
-
                 const metadata = { main_module: "index.js", bindings: currentBindings, compatibility_date: "2024-01-01" };
                 const formData = new FormData();
                 formData.append("metadata", JSON.stringify(metadata));
                 formData.append("script", new Blob([githubScriptContent], { type: "application/javascript+module" }), "index.js");
-
                 const updateRes = await fetch(baseUrl, { method: "PUT", headers, body: formData });
-                
                 if (updateRes.ok) {
                   logItem.success = true;
                   logItem.msg = `✅ 更新成功`;
@@ -300,20 +334,16 @@ async function coreDeployLogic(env, type, variables, accountsKey, versionKey) {
                   const errData = await updateRes.json();
                   logItem.msg = `❌ ${errData.errors?.[0]?.message}`;
                 }
-
               } catch (err) {
                 logItem.msg = `❌ ${err.message}`;
               }
               logs.push(logItem);
           } 
         }
-        
         if (updateCount > 0 && currentSha) {
             await env.CONFIG_KV.put(versionKey, JSON.stringify({ sha: currentSha, deployDate: new Date().toISOString() }));
         }
-
         return logs.length > 0 ? logs : [{ name: "提示", success: true, msg: `当前项目 (${type}) 未配置任何 Worker` }];
-
     } catch (e) {
         return [{ name: "系统错误", success: false, msg: e.message }];
     }
@@ -322,7 +352,7 @@ async function coreDeployLogic(env, type, variables, accountsKey, versionKey) {
 function loginHtml() { return `<!DOCTYPE html><html><body style="display:flex;justify-content:center;align-items:center;height:100vh;background:#f3f4f6"><form method="GET"><input type="password" name="code" placeholder="密码" style="padding:10px"><button style="padding:10px">登录</button></form></body></html>`; }
 
 // ==========================================
-// 前端页面代码
+// 前端页面代码 (UI 回归原始风格)
 // ==========================================
 function mainHtml() {
   return `
@@ -330,7 +360,7 @@ function mainHtml() {
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>Worker 智能中控 (Auto Update)</title>
+  <title>Worker 智能中控</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .input-field { border: 1px solid #cbd5e1; padding: 0.5rem; width:100%; border-radius: 4px; transition:all 0.2s;} 
@@ -341,6 +371,9 @@ function mainHtml() {
     .update-badge { animation: pulse-red 2s infinite; }
     .toggle-checkbox:checked { right: 0; border-color: #68D391; }
     .toggle-checkbox:checked + .toggle-label { background-color: #68D391; }
+    
+    /* 进度条 */
+    .progress-bar { transition: width 1s ease-in-out; }
   </style>
 </head>
 <body class="bg-slate-100 p-4 md:p-8">
@@ -370,51 +403,67 @@ function mainHtml() {
     </header>
     
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      
-      <div class="lg:col-span-2 bg-white p-6 rounded shadow flex flex-col h-fit">
-        <div class="flex justify-between items-center mb-4 border-b pb-2">
-            <h2 class="font-bold text-gray-700">📡 账号管理 (通用)</h2>
-            <button onclick="toggleAccounts()" id="btn_toggle_acc" class="text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-gray-600 transition">
-                🙈 隐藏列表
-            </button>
-        </div>
-        
-        <div id="account_container" class="transition-all duration-300">
-            <div class="bg-slate-50 p-4 mb-4 border rounded shadow-inner">
-               <div class="space-y-3 mb-3">
-                 <div class="flex gap-3">
-                     <input id="in_alias" placeholder="备注 (如: 主力账号)" class="input-field w-1/3 font-bold">
-                     <input id="in_id" placeholder="Account ID (32位)" class="input-field w-2/3 text-blue-600 font-mono">
-                 </div>
-                 <div>
-                     <input id="in_token" type="password" placeholder="API Token (必须有 Edit Workers 权限)" class="input-field">
-                 </div>
-                 
-                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-gray-200 mt-2">
-                     <div>
-                        <label class="text-xs font-bold text-red-600 mb-1 block">🔴 CMliu Workers</label>
-                        <input id="in_workers_cmliu" placeholder="用逗号隔开" class="input-field font-mono bg-red-50 border-red-200 focus:border-red-400">
-                     </div>
-                     <div>
-                        <label class="text-xs font-bold text-blue-600 mb-1 block">🔵 Joey Workers</label>
-                        <input id="in_workers_joey" placeholder="用逗号隔开" class="input-field font-mono bg-blue-50 border-blue-200 focus:border-blue-400">
-                     </div>
-                 </div>
-               </div>
-               <button onclick="addAccount()" id="btnSave" class="w-full bg-slate-700 text-white py-2 rounded font-bold hover:bg-slate-800 transition shadow-md">保存 / 更新账号</button>
-            </div>
+      <div class="lg:col-span-2 space-y-6">
+          
+          <div class="bg-white p-6 rounded shadow flex flex-col h-fit border-l-4 border-indigo-500">
+             <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <div class="flex flex-col">
+                    <h2 class="font-bold text-gray-700 flex items-center gap-2">📊 今日用量 (UTC 0点重置)</h2>
+                    <span class="text-[10px] text-gray-400 font-normal">含 Workers 和 Pages 调用量</span>
+                </div>
+                <button onclick="loadStats()" id="btn_stats" class="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1 rounded font-bold transition">
+                    🔄 刷新
+                </button>
+             </div>
+             <div id="stats_container" class="min-h-[60px] space-y-4">
+                <div class="text-center text-gray-400 text-xs py-4">正在获取数据...</div>
+             </div>
+          </div>
 
-            <div class="overflow-x-auto">
-              <table class="w-full text-sm text-left">
-                <thead class="bg-gray-50 text-gray-500"><tr><th class="p-2 w-1/5">备注</th><th class="p-2">Worker 分配详情</th><th class="p-2 w-20 text-right">操作</th></tr></thead>
-                <tbody id="tableBody"></tbody>
-              </table>
+          <div class="bg-white p-6 rounded shadow flex flex-col h-fit">
+            <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <h2 class="font-bold text-gray-700">📡 账号管理</h2>
+                <button onclick="toggleAccounts()" id="btn_toggle_acc" class="text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-gray-600 transition">
+                    👁️ 显示列表
+                </button>
             </div>
-        </div>
+            
+            <div id="account_container" class="hidden transition-all duration-300">
+                <div class="bg-slate-50 p-4 mb-4 border rounded shadow-inner">
+                   <div class="space-y-3 mb-3">
+                     <div class="flex gap-3">
+                         <input id="in_alias" placeholder="备注 (如: 主力账号)" class="input-field w-1/3 font-bold">
+                         <input id="in_id" placeholder="Account ID (32位)" class="input-field w-2/3 text-blue-600 font-mono">
+                     </div>
+                     <div>
+                         <input id="in_token" type="password" placeholder="API Token (需 Account Analytics 权限)" class="input-field">
+                     </div>
+                     
+                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-gray-200 mt-2">
+                         <div>
+                            <label class="text-xs font-bold text-red-600 mb-1 block">🔴 CMliu Workers</label>
+                            <input id="in_workers_cmliu" placeholder="用逗号隔开" class="input-field font-mono bg-red-50 border-red-200 focus:border-red-400">
+                         </div>
+                         <div>
+                            <label class="text-xs font-bold text-blue-600 mb-1 block">🔵 Joey Workers</label>
+                            <input id="in_workers_joey" placeholder="用逗号隔开" class="input-field font-mono bg-blue-50 border-blue-200 focus:border-blue-400">
+                         </div>
+                     </div>
+                   </div>
+                   <button onclick="addAccount()" id="btnSave" class="w-full bg-slate-700 text-white py-2 rounded font-bold hover:bg-slate-800 transition shadow-md">保存 / 更新账号</button>
+                </div>
+
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm text-left">
+                    <thead class="bg-gray-50 text-gray-500"><tr><th class="p-2 w-1/5">备注</th><th class="p-2">Worker 分配详情</th><th class="p-2 w-20 text-right">操作</th></tr></thead>
+                    <tbody id="tableBody"></tbody>
+                  </table>
+                </div>
+            </div>
+          </div>
       </div>
 
       <div id="vars_panel" class="lg:col-span-1 bg-white p-6 rounded shadow h-fit border-t-4 transition-colors duration-300 flex flex-col">
-        
         <div id="version_card" class="mb-4 bg-gray-50 border border-gray-200 rounded p-3 text-xs space-y-2 hidden">
             <div class="flex justify-between items-center">
                 <span class="font-bold text-gray-500">GitHub 上游:</span>
@@ -468,16 +517,13 @@ function mainHtml() {
   </div>
 
   <script>
-    // 定义模板
     const TEMPLATES = {
       'cmliu': { defaultVars: ["UUID", "PROXYIP", "PATH", "URL", "KEY", "ADMIN"], uuidField: "UUID", desc: "CMliu 项目 (标准变量)" },
       'joey':  { defaultVars: ["u", "d"], uuidField: "u", desc: "Joey 项目 (代码修复)" }
     };
-
     let accounts = [];
     let currentTemplate = 'cmliu';
 
-    // 时间格式化
     function timeAgo(dateString) {
         if(!dateString) return "无记录";
         const date = new Date(dateString);
@@ -488,7 +534,6 @@ function mainHtml() {
         return "刚刚";
     }
 
-    // 初始化
     async function init() { 
         const params = new URLSearchParams(window.location.search);
         const type = params.get('type');
@@ -504,8 +549,6 @@ function mainHtml() {
         const url = new URL(window.location);
         url.searchParams.set('type', currentTemplate);
         window.history.pushState({}, '', url);
-        
-        // UI重置
         document.getElementById('vars_container').innerHTML = '<div class="text-center text-gray-400 text-xs py-4">加载中...</div>';
         document.getElementById('version_card').classList.add('hidden');
         await loadData();
@@ -525,7 +568,7 @@ function mainHtml() {
             const [accRes, settingRes, autoCfgRes] = await Promise.all([
                 fetch(\`/api/accounts\`),
                 fetch(\`/api/settings?type=\${currentTemplate}\`),
-                fetch(\`/api/auto_config?type=\${currentTemplate}\`) // 加载自动更新配置
+                fetch(\`/api/auto_config?type=\${currentTemplate}\`)
             ]);
             accounts = await accRes.json();
             const savedSettings = await settingRes.json();
@@ -533,20 +576,71 @@ function mainHtml() {
             
             renderTable(); 
             initVars(savedSettings);
-            initAutoConfig(autoConfig); // 初始化自动更新UI
-
-            // 异步检测更新
+            initAutoConfig(autoConfig);
             checkUpdate();
+            loadStats(); // 自动加载统计
         } catch(e) { alert("加载失败: " + e.message); }
     }
     
-    // 初始化自动更新UI
+    // [UI回归] 渲染统计面板 (原版风格 + 新数据结构)
+    async function loadStats() {
+        const container = document.getElementById('stats_container');
+        const btn = document.getElementById('btn_stats');
+        btn.disabled = true; btn.innerText = "⏳ 查询中...";
+        
+        try {
+            const res = await fetch('/api/stats');
+            const data = await res.json();
+            
+            if (data.length === 0) {
+                container.innerHTML = '<div class="text-center text-gray-400 text-xs py-4">暂无数据 (请添加账号)</div>';
+            } else {
+                container.innerHTML = data.map(item => {
+                    if (item.error) {
+                         return \`<div class="bg-red-50 p-3 rounded border border-red-100 mb-2 shadow-sm"><div class="font-bold text-gray-700 text-xs flex justify-between items-center"><span>\${item.alias}</span><span class="text-red-600 bg-white px-2 py-1 rounded border border-red-100">\${item.error}</span></div></div>\`;
+                    }
+                    
+                    const totalUsed = item.total || 0;
+                    const limit = item.max || 100000;
+                    const percent = Math.min((totalUsed / limit) * 100, 100).toFixed(1);
+                    const workers = item.workers || 0;
+                    const pages = item.pages || 0;
+                    
+                    let colorClass = 'bg-green-500';
+                    if(percent > 50) colorClass = 'bg-yellow-500';
+                    if(percent > 80) colorClass = 'bg-orange-500';
+                    if(percent >= 100) colorClass = 'bg-red-600';
+
+                    return \`
+                        <div class="bg-slate-50 p-3 rounded border border-slate-200 shadow-sm">
+                            <div class="flex justify-between items-end mb-1">
+                                <span class="font-bold text-slate-700 text-sm">\${item.alias}</span>
+                                <span class="text-xs font-mono \${totalUsed > limit ? 'text-red-600 font-bold' : 'text-slate-600'}">
+                                   \${totalUsed.toLocaleString()} / \${limit.toLocaleString()}
+                                </span>
+                            </div>
+                            <div class="w-full bg-slate-200 rounded-full h-2.5 mb-2 overflow-hidden">
+                                <div class="\${colorClass} h-2.5 rounded-full progress-bar" style="width: \${percent}%"></div>
+                            </div>
+                            <div class="mt-2 pt-2 border-t border-slate-100 text-[10px] text-gray-500 flex justify-between">
+                                <span>W: \${workers.toLocaleString()}</span>
+                                <span>P: \${pages.toLocaleString()}</span>
+                            </div>
+                        </div>
+                    \`;
+                }).join('');
+            }
+        } catch(e) {
+            container.innerHTML = \`<div class="text-center text-red-500 text-xs py-4">加载失败: \${e.message}</div>\`;
+        }
+        btn.disabled = false; btn.innerText = "🔄 刷新";
+    }
+
     function initAutoConfig(cfg) {
         document.getElementById('auto_update_toggle').checked = !!cfg.enabled;
         document.getElementById('auto_update_interval').value = cfg.interval || 24;
     }
 
-    // 保存自动更新配置
     async function saveAutoConfig() {
         const enabled = document.getElementById('auto_update_toggle').checked;
         const interval = parseInt(document.getElementById('auto_update_interval').value) || 24;
@@ -555,11 +649,10 @@ function mainHtml() {
                 method: 'POST', 
                 body: JSON.stringify({ enabled, interval })
             });
-            alert("✅ 自动更新设置已保存 (请确保配置了 Cron Trigger)");
+            alert("✅ 自动更新设置已保存");
         } catch(e) { alert("保存失败"); }
     }
 
-    // 显示/隐藏账号列表
     function toggleAccounts() {
         const container = document.getElementById('account_container');
         const btn = document.getElementById('btn_toggle_acc');
@@ -572,25 +665,15 @@ function mainHtml() {
         }
     }
 
-    // 版本检测
     async function checkUpdate() {
-        const els = {
-            card: document.getElementById('version_card'),
-            remote: document.getElementById('remote_time'),
-            local: document.getElementById('local_time'),
-            msg: document.getElementById('update_msg'),
-            dot: document.getElementById('update_dot')
-        };
+        const els = { card: document.getElementById('version_card'), remote: document.getElementById('remote_time'), local: document.getElementById('local_time'), msg: document.getElementById('update_msg'), dot: document.getElementById('update_dot') };
         try {
             const res = await fetch(\`/api/check_update?type=\${currentTemplate}\`);
             const data = await res.json();
-            
             if (data.error) throw new Error(data.error);
-
             els.card.classList.remove('hidden');
             els.remote.innerText = timeAgo(data.remote.date);
             els.local.innerText = data.local ? timeAgo(data.local.deployDate) : "无记录";
-
             if (!data.local || data.remote.sha !== data.local.sha) {
                 els.msg.innerHTML = '<span class="text-red-500">🔴 发现新版本</span>';
                 els.dot.classList.remove('hidden');
@@ -600,34 +683,25 @@ function mainHtml() {
                 els.dot.classList.add('hidden');
                 document.getElementById('btnDeploy').classList.remove('animate-pulse');
             }
-        } catch(e) {
-            console.error(e);
-            els.remote.innerText = "检测失败";
-        }
+        } catch(e) { console.error(e); els.remote.innerText = "检测失败"; }
     }
 
-    // 初始化变量
     function initVars(savedData) {
         const container = document.getElementById('vars_container');
         container.innerHTML = '';
-        
         const defaults = TEMPLATES[currentTemplate].defaultVars;
         const uuidKey = TEMPLATES[currentTemplate].uuidField;
         const savedMap = new Map();
         if (savedData && Array.isArray(savedData)) {
             savedData.forEach(item => savedMap.set(item.key, item.value));
         }
-
         defaults.forEach(key => {
             let val = savedMap.get(key) || '';
             if (val === '' && key === uuidKey) val = crypto.randomUUID();
             addVarRow(key, val);
             savedMap.delete(key);
         });
-
-        savedMap.forEach((val, key) => {
-            addVarRow(key, val);
-        });
+        savedMap.forEach((val, key) => addVarRow(key, val));
     }
 
     function resetVars() {
@@ -641,12 +715,9 @@ function mainHtml() {
       else tb.innerHTML = accounts.map((a,i) => {
         const cmliuList = Array.isArray(a.workers_cmliu) ? a.workers_cmliu : [];
         const cTags = cmliuList.map(w => \`<span class="inline-block bg-red-50 text-red-600 text-[10px] px-1 rounded border border-red-100 mr-1">C:\${w}</span>\`).join('');
-        
         const joeyList = Array.isArray(a.workers_joey) ? a.workers_joey : [];
         const jTags = joeyList.map(w => \`<span class="inline-block bg-blue-50 text-blue-600 text-[10px] px-1 rounded border border-blue-100 mr-1">J:\${w}</span>\`).join('');
-
         const allTags = (cTags + jTags) || '<span class="text-gray-300 text-xs">未分配</span>';
-        
         return \`<tr class="border-b hover:bg-gray-50 transition">
           <td class="p-2 font-medium">\${a.alias}</td>
           <td class="p-2">\${allTags}</td>
@@ -659,10 +730,8 @@ function mainHtml() {
 
     function edit(i) {
       const a = accounts[i];
-      // 如果列表被隐藏了，自动展开
       document.getElementById('account_container').classList.remove('hidden');
       document.getElementById('btn_toggle_acc').innerText = "🙈 隐藏列表";
-      
       document.getElementById('in_alias').value = a.alias;
       document.getElementById('in_id').value = a.accountId;
       document.getElementById('in_token').value = a.apiToken;
@@ -678,9 +747,7 @@ function mainHtml() {
       const token = document.getElementById('in_token').value.trim();
       const cStr = document.getElementById('in_workers_cmliu').value.trim();
       const jStr = document.getElementById('in_workers_joey').value.trim();
-
       if(!id || !token) return alert("ID 和 Token 必填");
-
       accounts.push({
           alias: alias||'未命名', 
           accountId: id, 
@@ -688,16 +755,12 @@ function mainHtml() {
           workers_cmliu: cStr.split(/,|，/).map(s=>s.trim()).filter(s=>s.length>0),
           workers_joey:  jStr.split(/,|，/).map(s=>s.trim()).filter(s=>s.length>0)
       });
-      
       await fetch(\`/api/accounts\`, {method:'POST', body:JSON.stringify(accounts)});
-      
-      // 重置表单
       document.getElementById('in_alias').value = '';
       document.getElementById('in_id').value = '';
       document.getElementById('in_token').value = '';
       document.getElementById('in_workers_cmliu').value = '';
       document.getElementById('in_workers_joey').value = '';
-      
       const btn = document.getElementById('btnSave'); btn.innerText = "保存 / 更新账号"; btn.classList.replace('bg-orange-500', 'bg-slate-700');
       renderTable();
     }
@@ -741,23 +804,17 @@ function mainHtml() {
           const v = vals[i].value.trim();
           if(k) variables.push({key: k, value: v});
       }
-
       const btn = document.getElementById('btnDeploy'); btn.disabled=true; 
       const log = document.getElementById('logs'); log.classList.remove('hidden'); log.innerHTML = '正在分析...';
-      
       try {
         await fetch(\`/api/settings?type=\${currentTemplate}\`, {method: 'POST', body: JSON.stringify(variables)});
         const res = await fetch(\`/api/deploy?type=\${currentTemplate}\`, {method:'POST', body:JSON.stringify({variables})});
         const data = await res.json();
-        
-        // 部署成功后，重新检测一下状态
         checkUpdate();
-
         log.innerHTML = data.map(l => \`<div class="\${l.success?'text-green-400':'text-red-400'} border-b border-gray-700 mb-1 pb-1">[\${l.success?'✔':'✘'}] \${l.name}<br><span class="text-gray-500 ml-4">\${l.msg}</span></div>\`).join('');
       } catch(e) { log.innerHTML = \`<div class="text-red-500">\${e.message}</div>\`; }
       btn.disabled=false; 
     }
-    
     init();
   </script>
 </body></html>
