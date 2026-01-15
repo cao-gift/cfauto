@@ -1,177 +1,125 @@
-<img width="1920" height="879" alt="image" src="https://github.com/user-attachments/assets/fef7e297-e455-41f9-b716-190ee68a59c7" />
 ---
 
-# 🚀 Cloudflare Worker 部署中控
+# 🚀 Cloudflare Worker 多项目部署管理器 (V6.8)
 
-Cloudflare Worker部署管理工具，管理和维护 **CMliu (EdgeTunnel)** 与 **Joey (CFNew)** 两个项目。
-
-它集成了**多账号管理**、**全局流量熔断**、**自动版本更新**、**双项目并行管理**以及**变量动态配置**等功能，拥有一个美观且功能强大的 Web 控制面板。
-
-## ✨ 核心功能
-
-* **🛡️ 全局流量熔断 (Global Fuse)**：
-* 监控 Cloudflare 账号的总流量（Workers + Pages）。
-* 当流量使用百分比超过设定阈值时，**自动同时轮换**该账号下所有项目的 UUID 并重新部署，防止被封号。
+这是一个运行在 Cloudflare Worker 上的高级部署与管理工具，专为管理多个 Cloudflare 账号下的 Worker 项目（如 EdgeTunnel、CFNew 等）而设计。它集成了代码自动部署、变量管理、流量监控、熔断保护和多端适配等功能，是批量管理节点的终极解决方案。
+<img width="1660" height="631" alt="image" src="https://github.com/user-attachments/assets/19d76662-04e1-4279-aa38-d8bae78e1d85" />
+<img width="1690" height="885" alt="image" src="https://github.com/user-attachments/assets/82832d18-ba3f-49ca-8a3c-5ac0e305d18a" />
 
 
-* **🔄 自动更新检测**：
-* 定时检查 GitHub 上游仓库的最新 Commit。
-* 发现新版本自动拉取代码并重新部署，保持项目最新。
+## ✨ 主要功能
 
+### 1. 📡 多账号集中管理
 
-* **📊 智能统计面板**：
-* 直观展示各账号的今日流量使用情况。
-* 自动按流量使用量**降序排列**，一眼识别流量大户。
+* **无限账号支持**：在一个面板内管理无数个 Cloudflare 账号。
+* **统一视图**：直观展示所有账号的 Worker 分配情况。
+* **流量监控**：实时获取每个账号的今日请求量、总限额（10w/天）及使用百分比。
+* **智能排序**：账号列表自动按**流量使用量降序排列**，优先关注高负载账号。
 
+### 2. 🛠️ 深度变量管理
 
-* **⚡ 双项目并行管理**：
-* 无需切换页面，同屏管理 CMliu 和 Joey 两个项目的变量与部署状态。
+* **自动读取 (Auto-Load)**：点击编辑账号时，**自动无感读取**线上 Worker 的当前配置变量。
+* **完全铺开展示**：变量列表不再折叠，自适应高度完全铺开，便于查看大量配置。
+* **一键同步 (Sync Select)**：支持从任意已配置的账号读取变量配置，一键应用到当前账号（支持选择同步源）。
+* **真实删除**：在线上变量列表中点击删除，不仅删除变量，还会**自动从 GitHub 拉取最新纯净代码重新部署**，彻底清除残留。
 
+### 3. 🚀 自动化与部署
 
-* **⚙️ 动态变量管理**：
-* 支持在 UI 上直接添加、修改、删除 Worker 环境变量（如 UUID, PROXYIP 等）。
-* 一键生成新的随机 UUID。
+* **一键部署**：支持一键将 GitHub 仓库的最新代码部署到指定账号的 Worker。
+* **自动更新**：配合 Cron 定时任务，自动检测上游代码更新并同步。
+* **全局熔断保护**：设置流量阈值（如 80%），当账号流量超过阈值时，自动轮换 UUID 并重新部署，防止被封或超量。
 
+### 4. 📱 极致 UI/UX 体验
 
+* **响应式设计**：完美适配 PC 和 手机端。手机端表格支持横向滑动，布局自动堆叠。
+* **布局记忆**：支持“左右分栏”和“上下分栏”两种布局，系统自动记住您的选择。
+* **All-in-One 编辑**：在同一个弹窗内完成改名、换 Token、看流量、改变量等所有操作。
 
 ---
 
-## 🛠️ 部署指南
+## ⚙️ 部署指南
 
-### 1. 准备工作
+### 第一步：准备工作
 
-* 一个 **Cloudflare** 账号。
-* (可选) 一个 **GitHub Token**（用于提高 API 请求限额，避免检测更新失败）。
-
-### 2. 创建 Cloudflare Worker
-
-1. 登录 Cloudflare Dashboard，进入 **Workers & Pages**。
-2. 点击 **Create Application** -> **Create Worker**。
-3. 命名为 `worker-manager` (或任意名称)，点击 **Deploy**。
-4. 点击 **Edit code**，将提供的 `worker.js` (V5.4) 完整代码粘贴进去，**Save and Deploy**。
-
-### 3. 配置 KV Namespace (数据库)
-
-此脚本需要 KV 来存储账号信息和配置。
-
-1. 在 Cloudflare Dashboard 左侧菜单找到 **KV**。
-2. 点击 **Create a Namespace**，命名为 `CONFIG_KV` (或其他名字，建议一致)。
-3. 回到你的 Worker 设置页面 -> **Settings** -> **Variables**。
-4. 在 **KV Namespace Bindings** 区域：
-* **Variable name**: 必须填 `CONFIG_KV` (代码中写死的变量名)。
-* **KV Namespace**: 选择你刚才创建的那个。
+1. 拥有一个 Cloudflare 账号。
+2. 准备好需要管理的子账号的 **Account ID** 和 **API Token**。
+* *API Token 权限要求：Workers Scripts (Edit), Account Settings (Read), User Details (Read).*
 
 
-5. 点击 **Save and deploy**。
 
-### 4. 设置环境变量
+### 第二步：创建 Worker
+
+1. 在 Cloudflare Dashboard 创建一个新的 Worker。
+2. 将 `_worker.js` (V6.8) 的所有代码复制并粘贴到 Worker 的编辑器中。
+3. 保存并部署。
+
+### 第三步：配置 KV 存储 (必须)
+
+1. 在 Cloudflare 侧栏选择 **Workers & Pages** -> **KV**。
+2. 创建一个新的命名空间，建议命名为 `CONFIG_KV`。
+3. 回到你创建的 Worker -> **Settings (设置)** -> **Variables (变量)** -> **KV Namespace Bindings**。
+4. 点击 **Add binding**：
+* **Variable name (变量名)**: `CONFIG_KV` (必须完全一致)
+* **KV Namespace**: 选择刚才创建的命名空间。
+
+
+5. 保存并部署。
+
+### 第四步：设置环境变量 (可选但推荐)
 
 在 Worker 的 **Settings** -> **Variables** -> **Environment Variables** 中添加：
 
-| 变量名 | 必填 | 说明 |
-| --- | --- | --- |
-| `ACCESS_CODE` | ✅ 是 | **访问密码**。用于登录中控面板，防止他人访问。 |
-| `GITHUB_TOKEN` | ❌ 否 | **GitHub 个人访问令牌**。如果你的 Worker 频繁检测更新报错，建议配置此项以提高 API 限额。权限只需 `public_repo` 即可。 |
-
-### 5. 设置触发器 (Cron Triggers)
-
-为了让自动熔断和自动更新功能生效，必须设置定时任务。
-
-1. 进入 Worker 的 **Settings** -> **Triggers**。
-2. 点击 **Add Cron Trigger**。
-3. **Cron Schedule**: 建议设置为 `*/30 * * * *` (每30分钟执行一次)。
-* *注意：具体的检测频率逻辑（如每小时还是每分钟）是在 Web 面板的“自动检测设置”中配置的，这里的 Cron 只是为了唤醒 Worker 去检查配置。*
-
-
+* **ACCESS_CODE**: 设置一个访问密码（例如 `123456`）。设置后，访问网页需要输入密码或在 URL 后加 `?code=密码`。
+* **GITHUB_TOKEN**: (可选) 如果你请求 GitHub API 频繁，建议填入 GitHub Personal Access Token 以提高速率限制。
 
 ---
 
-## 📖 使用教程
+## ⏰ Cron 定时任务设置
 
-### 1. 登录面板
+为了实现**自动更新**和**熔断保护**功能，你需要配置 Cron 触发器。
 
-访问你的 Worker URL (例如 `https://your-worker.workers.dev`)，输入你在环境变量中设置的 `ACCESS_CODE` 登录。
-
-### 2. 添加 Cloudflare 账号
-
-在左侧 **“📡 账号管理”** 面板中：
-
-1. 点击 **“➕ 添加账号”**。
-2. 填写信息：
-* **备注**: 给账号起个名字（如：主力号、备用号）。
-* **Account ID**: 在 Cloudflare 首页域名右下角可以找到。
-* **API Token**: **必须申请一个具有以下权限的 Token**：
-* `Account` - `Account Analytics` - `Read` (读取流量统计)
-* `Account` - `Worker Scripts` - `Edit` (修改/部署 Worker)
+1. 进入 Worker 的 **Settings** -> **Triggers (触发器)**。
+2. 点击 **Add Cron Trigger**。
+3. 添加一个时间计划，例如每 30 分钟执行一次：
+* **Cron expression**: `*/30 * * * *`
 
 
-* **Worker 分配**: 填写该账号下已经创建好的 Worker 名称。
-* *🔴 CMliu Workers*: 填部署了 EdgeTunnel 的 Worker 名。
-* *🔵 Joey Workers*: 填部署了 Joey 项目的 Worker 名。
-* *(多个 Worker 用逗号 `,` 隔开)*
+4. 保存。
+
+**在网页端配置自动任务：**
+部署完成后，打开网页，在顶部状态栏中：
+
+1. 开启 **"自动检测"** 开关。
+2. 设置频率（例如 30 分钟，需与 Cloudflare Cron 设置相符或为其倍数）。
+3. 设置 **熔断阈值**（例如 `80`，代表 80%）。填 `0` 则关闭熔断功能。
+4. 点击 **"保存"**。
+
+---
+
+## 📖 使用说明
+
+### 添加账号
+
+1. 点击 **"➕ 添加账号"**。
+2. 填写 **备注** (Alias)、**Account ID**、**API Token**。
+3. 在 **Worker 分配** 栏填写该账号下对应的 Worker 名称（多个名称用逗号分隔）。
+* *红色框填 CMliu 系列项目的 Worker 名。*
+* *蓝色框填 Joey 系列项目的 Worker 名。*
 
 
+4. 点击保存。
 
+### 变量管理与同步
 
-3. 点击 **保存账号**。
-
-### 3. 配置自动熔断与更新
-
-在页面顶部的 **配置栏** 中：
-
-1. 勾选 **“自动检测”** 开关。
-2. 设置 **频率** (建议与 Cron Trigger 保持一致或倍数关系，如 30 分钟)。
-3. 设置 **熔断阈值%**：
-* 例如设置为 `90`。
-* 当账号总流量超过 90% (即 90,000 请求，免费版限额 10w) 时，系统会自动更换所有关联 Worker 的 UUID 并重新部署。
-* 设置为 `0` 则关闭熔断功能。
-
-
-4. 点击 **“保存设置”**。
-
-### 4. 变量管理与手动部署
-
-在右侧的项目面板中：
-
-* **添加变量**: 点击虚线框 **“➕ 添加自定义变量”**，输入 Key (如 `TOKEN`) 和 Value。
-* **修改变量**: 直接在输入框修改。
-* **刷新 UUID**: 点击 **“🎲 刷 UUID”** 会随机生成新 ID（仅修改前端显示，需点击部署才生效）。
-* **部署**: 点击 **“🚀 部署 ...”**，脚本会自动保存变量并上传代码到 Cloudflare。
+* **修改变量**：点击列表右侧的 **"✎"**，在弹出的面板下方会自动加载线上变量，直接修改文本框内容即可。
+* **删除变量**：点击变量右侧的 **🗑️** 图标。**注意：** 这会触发代码重拉取和重部署，请耐心等待几秒。
+* **同步配置**：在右侧项目配置卡片中，点击 **"🔄 同步"**，选择一个已配置好的账号，将其变量模板复制过来。
 
 ---
 
 ## ⚠️ 注意事项
 
-1. **权限问题**：
-* 提供的 Cloudflare API Token 必须拥有 **编辑 Worker** 和 **读取账号分析(Analytics)** 的权限，否则无法统计流量或部署失败。
-
-
-2. **流量统计延迟**：
-* Cloudflare 的 GraphQL 流量统计可能有 5-15 分钟的延迟，熔断并非实时精确到秒，建议阈值不要设置得太极限（如建议 90% 甚至 80%）。
-
-
-3. **项目名称匹配**：
-* 在添加账号时，填写的 Worker 名称必须与你在 Cloudflare 后台实际创建的 Worker 名称**完全一致**，否则会提示找不到脚本。
-
-
-4. **覆盖风险**：
-* 部署功能会**覆盖**目标 Worker 的现有代码。请确保你只想运行 CMliu 或 Joey 的代码。
-
-
-5. **GitHub API 限制**：
-* 如果不配置 `GITHUB_TOKEN`，GitHub API 限制每小时 60 次请求。如果是多账号高频检测，可能会导致检测更新失败（面板显示 "Status Err"）。
-
-
-
----
-
-## ❓ 常见问题
-
-**Q: 为什么状态显示 "Status Err"?**
-A: 通常是因为 GitHub API 请求受限。请在 Worker 环境变量中添加 `GITHUB_TOKEN`，或者稍后再试。
-
-**Q: 熔断触发了，但是 Worker 没变？**
-A: 请检查 Cron 是否配置正确，以及 API Token 是否有权限编辑 Worker Scripts。
-
-**Q: 修改了变量没有生效？**
-A: 修改变量后必须点击 **“🚀 部署”** 按钮，系统才会将新变量应用到 Cloudflare Worker 中。
+1. **API 权限**：请确保提供的 API Token 拥有足够的权限修改 Worker 脚本和读取账号统计信息，否则流量统计和部署将失败。
+2. **变量删除机制**：在 V6.8 中，删除变量的操作**不是**单纯删除配置，而是“读取剩余变量 + 从 GitHub 拉取最新代码 + 重新部署”。这是为了防止 Cloudflare 缓存旧代码元数据导致语法错误。
+3. **熔断原理**：当流量达到设定阈值（如 80%），脚本会自动为该账号下的 Worker 生成新的 UUID 并重新部署，从而阻断旧链接的流量攻击。
+4. **KV 绑定名**：代码中写死了 KV 绑定的变量名为 `CONFIG_KV`，请勿在 Cloudflare 后台绑定为其他名字，否则无法保存数据。
