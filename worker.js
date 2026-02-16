@@ -1,5 +1,10 @@
 /**
- * Cloudflare Worker 多项目部署管理器 (V10.2.0 - Starfield Theme)
+ * Cloudflare Worker 多项目部署管理器 (V10.2.1 - Starfield Theme)
+ * 更新日志 (V10.2.1)：
+ * 1. [Fix] 修复 coreDeployLogic 中 targetSha='latest' 被当作 git ref 导致自动更新代码下载失败。
+ * 2. [Fix] 修复部署后 deploy config 被错误锁定为 fixed 模式，导致后续自动更新永远跳过。
+ * 3. [Fix] 修复历史版本 "Always Latest" 部署触发同样的 URL 构造错误。
+ *
  * 更新日志 (V10.2.0)：
  * 1. [Feature] 新增暗黑星空模式 / 明亮模式主题切换。
  * 2. [Feature] Canvas 动态星空背景（闪烁星星 + 流星 + 星云光晕）。
@@ -521,12 +526,16 @@ async function handleBatchDeploy(env, reqData, accountsKey) {
 // 核心部署逻辑 (支持服务器端混淆)
 async function coreDeployLogic(env, type, variables, deletedVariables, accountsKey, targetSha, enableServerObfuscate = false) {
     try {
+        // 规范化：'latest' 和空值统一视为“跟随最新”
+        const isLatestMode = !targetSha || targetSha === 'latest';
+        const shaForFetch = isLatestMode ? null : targetSha;
+
         const accounts = JSON.parse(await env.CONFIG_KV.get(accountsKey) || "[]");
         if (accounts.length === 0) return [{ name: "提示", success: false, msg: "无账号配置" }];
 
-        const { scriptUrl, apiUrl } = getGithubUrls(type, targetSha);
+        const { scriptUrl, apiUrl } = getGithubUrls(type, shaForFetch);
         let githubScriptContent = "";
-        let deployedSha = targetSha;
+        let deployedSha = shaForFetch;
 
         try {
             const codeRes = await fetch(scriptUrl + `?t=${Date.now()}`);
@@ -601,7 +610,7 @@ async function coreDeployLogic(env, type, variables, deletedVariables, accountsK
 
         if (deployedSha) {
             const DEPLOY_CONFIG_KEY = `DEPLOY_CONFIG_${type}`;
-            const mode = targetSha ? 'fixed' : 'latest';
+            const mode = isLatestMode ? 'latest' : 'fixed';
             await env.CONFIG_KV.put(DEPLOY_CONFIG_KEY, JSON.stringify({ mode: mode, currentSha: deployedSha, deployTime: new Date().toISOString() }));
         }
         return logs;
@@ -798,7 +807,7 @@ function mainHtml() {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="manifest" href="/manifest.json">
-    <title>Worker 智能中控 (V10.2.0)</title>
+    <title>Worker 智能中控 (V10.2.1)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.jsdelivr.net/npm/javascript-obfuscator/dist/index.browser.js"></script>
@@ -908,7 +917,7 @@ function mainHtml() {
       
       <header class="bg-white px-4 py-3 md:px-6 md:py-4 rounded shadow flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div class="flex-none">
-              <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">🚀 Worker 部署中控 <span class="text-xs bg-purple-600 text-white px-2 py-0.5 rounded ml-2">V10.2.0</span></h1>
+              <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">🚀 Worker 部署中控 <span class="text-xs bg-purple-600 text-white px-2 py-0.5 rounded ml-2">V10.2.1</span></h1>
               <div class="text-[10px] text-gray-400 mt-1">安全加固 · 熔断混淆 · 子域名管理 · 星空主题</div>
           </div>
           <div id="logs" class="bg-slate-900 text-green-400 p-2 rounded text-xs font-mono hidden max-h-[80px] lg:max-h-[50px] overflow-y-auto shadow-inner w-full lg:flex-1 lg:mx-4 order-2 lg:order-none"></div>
