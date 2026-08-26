@@ -1,7 +1,10 @@
 /**
- * Cloudflare Worker 多项目部署管理器 (V10.10.0)
- * 更新日志 (V10.10.0)：
- * 1. [Feature] 首创 YXIP 面向 Joey 底层的双轨分发策略，兼顾 KV 数据流强管与纯变量下发兼容模式。
+ * Cloudflare Worker 多项目部署管理器 (V10.11.0)
+ * 更新日志 (V10.11.0)：
+ * 1. [Feature] 动态嗅探 GitHub 默认分支与目标脚本（智能匹配 CMLiu _worker.js 与 Joey 少年你相信光吗）。
+ * 2. [Fix] 适配 CFNEW 兼容时间 (compatibility_date: 2024-02-20)，解决批量部署时时间错乱导致连接失败 (Issue #10)。
+ * 3. [Feature] 账号管理全量支持 API Token 与 Global API Key 双轨认证 (Issue #14)。
+ * 4. [UI] 模板卡片与部署日志增加开源仓库直链及快捷访问路径指引 (/admin, /{uuid}) (Issue #3)。
  * 完整历史版本记录见 CHANGELOG.md
  */
 
@@ -13,11 +16,15 @@ const TEMPLATES = {
         name: "CMliu - EdgeTunnel",
         ghUser: "cmliu",
         ghRepo: "edgetunnel",
-        ghBranch: "beta2.0",
+        ghBranch: "main",
         ghPath: "_worker.js",
+        filePattern: "_worker.js",
+        repoUrl: "https://github.com/cmliu/edgetunnel",
+        adminPath: "/admin",
+        compatibilityDate: "2024-04-05",
         defaultVars: ["UUID", "PROXYIP", "DOH", "PATH", "URL", "KEY", "ADMIN"],
         uuidField: "UUID",
-        description: "CMliu (beta2.0) - 建议开启 KV"
+        description: "CMliu (EdgeTunnel) - 建议开启 KV"
     },
     'joey': {
         name: "Joey - 少年你相信光吗",
@@ -25,6 +32,10 @@ const TEMPLATES = {
         ghRepo: "cfnew",
         ghBranch: "main",
         ghPath: "少年你相信光吗",
+        filePattern: "少年你相信光吗",
+        repoUrl: "https://github.com/byJoey/cfnew",
+        adminPath: "",
+        compatibilityDate: "2024-02-20",
         defaultVars: ["u"],
         uuidField: "u",
         description: "Joey (自动修复) - KV 可选"
@@ -35,6 +46,10 @@ const TEMPLATES = {
         ghRepo: "ech-wk",
         ghBranch: "main",
         ghPath: "_worker.js",
+        filePattern: "_worker.js",
+        repoUrl: "https://github.com/hc990275/ech-wk",
+        adminPath: "/admin",
+        compatibilityDate: "2024-04-05",
         defaultVars: ["PROXYIP"],
         uuidField: "",
         description: "ECH (无需频繁更新)"
@@ -42,14 +57,35 @@ const TEMPLATES = {
 };
 
 const ECH_PROXIES = [
-    { group: "Global", list: ["ProxyIP.CMLiussss.net", "ProxyIP.Aliyun.CMLiussss.net", "ProxyIP.Oracle.CMLiussss.net"] },
-    { group: "HK (香港)", list: ["ProxyIP.HK.CMLiussss.net", "ProxyIP.Aliyun.HK.CMLiussss.net", "ProxyIP.Oracle.HK.CMLiussss.net"] },
-    { group: "JP (日本)", list: ["ProxyIP.JP.CMLiussss.net", "ProxyIP.Aliyun.JP.CMLiussss.net", "ProxyIP.Oracle.JP.CMLiussss.net"] },
-    { group: "SG (新加坡)", list: ["ProxyIP.SG.CMLiussss.net", "ProxyIP.Aliyun.SG.CMLiussss.net", "ProxyIP.Oracle.SG.CMLiussss.net"] },
-    { group: "KR (韩国)", list: ["ProxyIP.KR.CMLiussss.net", "ProxyIP.Oracle.KR.CMLiussss.net"] },
-    { group: "US (美国)", list: ["ProxyIP.US.CMLiussss.net", "ProxyIP.Aliyun.US.CMLiussss.net", "ProxyIP.Oracle.US.CMLiussss.net"] },
-    { group: "Europe", list: ["ProxyIP.DE.CMLiussss.net (德国)", "ProxyIP.UK.CMLiussss.net (英国)", "ProxyIP.FR.CMLiussss.net (法国)", "ProxyIP.NL.CMLiussss.net (荷兰)", "ProxyIP.RU.CMLiussss.net (俄罗斯)"] },
-    { group: "Others", list: ["ProxyIP.TW.CMLiussss.net (台湾)", "ProxyIP.AU.CMLiussss.net (澳洲)", "ProxyIP.IN.CMLiussss.net (印度)"] }
+    { group: "🌐 自动 / 全球 (Global)", list: ["ProxyIP.CMLiussss.net"] },
+    { group: "💸 亚洲 (Asia)", list: [
+        "ProxyIP.HK.CMLiussss.net (香港 🇭🇰)",
+        "ProxyIP.SG.CMLiussss.net (新加坡 🇸🇬)",
+        "ProxyIP.JP.CMLiussss.net (日本 🇯🇵)",
+        "ProxyIP.KR.CMLiussss.net (韩国 🇰🇷)",
+        "ProxyIP.IN.CMLiussss.net (印度 🇮🇳)"
+    ]},
+    { group: "💸 欧洲 (Europe)", list: [
+        "ProxyIP.GB.CMLiussss.net (英国 🇬🇧)",
+        "ProxyIP.FR.CMLiussss.net (法国 🇫🇷)",
+        "ProxyIP.DE.CMLiussss.net (德国 🇩🇪)",
+        "ProxyIP.NL.CMLiussss.net (荷兰 🇳🇱)",
+        "ProxyIP.SE.CMLiussss.net (瑞典 🇸🇪)",
+        "ProxyIP.FI.CMLiussss.net (芬兰 🇫🇮)",
+        "ProxyIP.PL.CMLiussss.net (波兰 🇵🇱)",
+        "ProxyIP.RU.CMLiussss.net (俄罗斯 🇷🇺)",
+        "ProxyIP.CH.CMLiussss.net (瑞士 🇨🇭)",
+        "ProxyIP.LV.CMLiussss.net (拉脱维亚 🇱🇻)"
+    ]},
+    { group: "💵 北美 (North America)", list: [
+        "ProxyIP.US.CMLiussss.net (美国 🇺🇸)",
+        "ProxyIP.CA.CMLiussss.net (加拿大 🇨🇦)"
+    ]},
+    { group: "📣 第三方维护 (Third-party)", list: [
+        "kr.william.us.ci (韩国 - 威廉)",
+        "tw.william.us.ci (台湾 - 威廉)",
+        "proxy.mia.xx.kg (Mia)"
+    ]}
 ];
 
 export default {
@@ -163,29 +199,29 @@ export default {
                 return await handleBatchDeploy(env, data, ACCOUNTS_KEY);
             }
             if (url.pathname === "/api/zones" && request.method === "POST") {
-                const { accountId, email, globalKey } = await request.json();
-                return await handleGetZones(accountId, email, globalKey);
+                const { accountId, email, globalKey, apiToken } = await request.json();
+                return await handleGetZones(accountId, email, globalKey, apiToken);
             }
             if (url.pathname === "/api/all_workers" && request.method === "POST") {
-                const { accountId, email, globalKey } = await request.json();
-                return await handleGetAllWorkers(accountId, email, globalKey);
+                const { accountId, email, globalKey, apiToken } = await request.json();
+                return await handleGetAllWorkers(accountId, email, globalKey, apiToken);
             }
             if (url.pathname === "/api/delete_worker" && request.method === "POST") {
-                const { accountId, email, globalKey, workerName, deleteKv } = await request.json();
-                return await handleDeleteWorker(env, accountId, email, globalKey, workerName, deleteKv);
+                const { accountId, email, globalKey, apiToken, workerName, deleteKv } = await request.json();
+                return await handleDeleteWorker(env, accountId, email, globalKey, apiToken, workerName, deleteKv);
             }
             if (url.pathname === "/api/stats" && request.method === "GET") return await handleStats(env, ACCOUNTS_KEY);
             if (url.pathname === "/api/fetch_bindings" && request.method === "POST") {
-                const { accountId, email, globalKey, workerName } = await request.json();
-                return await handleFetchBindings(accountId, email, globalKey, workerName);
+                const { accountId, email, globalKey, apiToken, workerName } = await request.json();
+                return await handleFetchBindings(accountId, email, globalKey, apiToken, workerName);
             }
             if (url.pathname === "/api/get_subdomain" && request.method === "POST") {
-                const { accountId, email, globalKey } = await request.json();
-                return await handleGetSubdomain(accountId, email, globalKey);
+                const { accountId, email, globalKey, apiToken } = await request.json();
+                return await handleGetSubdomain(accountId, email, globalKey, apiToken);
             }
             if (url.pathname === "/api/change_subdomain" && request.method === "POST") {
-                const { accountId, email, globalKey, newSubdomain } = await request.json();
-                return await handleChangeSubdomain(accountId, email, globalKey, newSubdomain);
+                const { accountId, email, globalKey, apiToken, newSubdomain } = await request.json();
+                return await handleChangeSubdomain(accountId, email, globalKey, apiToken, newSubdomain);
             }
             if (url.pathname === "/api/fix_1101" && request.method === "POST") {
                 const { type } = await request.json();
@@ -209,21 +245,109 @@ export default {
 
 // ================= 后端辅助函数 =================
 
-function getGithubUrls(type, sha = null) {
+function getAuthHeaders(emailOrAcc, key = null) {
+    if (typeof emailOrAcc === 'object' && emailOrAcc !== null) {
+        if (emailOrAcc.apiToken && emailOrAcc.apiToken.trim()) {
+            return { "Authorization": `Bearer ${emailOrAcc.apiToken.trim()}`, "Content-Type": "application/json" };
+        }
+        return { "X-Auth-Email": emailOrAcc.email, "X-Auth-Key": emailOrAcc.globalKey, "Content-Type": "application/json" };
+    }
+    if (!key && emailOrAcc) {
+        return { "Authorization": `Bearer ${emailOrAcc.trim()}`, "Content-Type": "application/json" };
+    }
+    return { "X-Auth-Email": emailOrAcc, "X-Auth-Key": key, "Content-Type": "application/json" };
+}
+
+function getUploadHeaders(emailOrAcc, key = null) {
+    if (typeof emailOrAcc === 'object' && emailOrAcc !== null) {
+        if (emailOrAcc.apiToken && emailOrAcc.apiToken.trim()) {
+            return { "Authorization": `Bearer ${emailOrAcc.apiToken.trim()}` };
+        }
+        return { "X-Auth-Email": emailOrAcc.email, "X-Auth-Key": emailOrAcc.globalKey };
+    }
+    if (!key && emailOrAcc) {
+        return { "Authorization": `Bearer ${emailOrAcc.trim()}` };
+    }
+    return { "X-Auth-Email": emailOrAcc, "X-Auth-Key": key };
+}
+
+async function resolveGithubUrls(env, type, sha = null) {
     const t = TEMPLATES[type];
-    const safePath = t.ghPath.split('/').map(p => encodeURIComponent(p)).join('/');
+    const cacheKey = `GH_INFO_CACHE_${type}`;
+    let branch = t.ghBranch || 'main';
+    let path = t.ghPath;
+
+    // 尝试从 KV 缓存获取探测结果（未指定特定 sha 时加速）
+    if (!sha && env && env.CONFIG_KV) {
+        try {
+            const cached = await env.CONFIG_KV.get(cacheKey);
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                if (Date.now() - (parsed.time || 0) < 15 * 60 * 1000) {
+                    branch = parsed.branch || branch;
+                    path = parsed.path || path;
+                }
+            }
+        } catch (e) { }
+    }
+
+    const headers = { "User-Agent": "Cloudflare-Worker-Manager" };
+    if (env && env.GITHUB_TOKEN) headers["Authorization"] = `token ${env.GITHUB_TOKEN}`;
+
+    // 如果未缓存或需要探测
+    if (!sha && (!branch || !path || path === t.ghPath)) {
+        try {
+            // 1. 获取默认分支
+            const repoRes = await fetch(`https://api.github.com/repos/${t.ghUser}/${t.ghRepo}`, { headers });
+            if (repoRes.ok) {
+                const repoData = await repoRes.json();
+                if (repoData.default_branch) branch = repoData.default_branch;
+            }
+
+            // 2. 获取树形文件列表以智能探测匹配文件
+            const treeRes = await fetch(`https://api.github.com/repos/${t.ghUser}/${t.ghRepo}/git/trees/${branch}?recursive=1`, { headers });
+            if (treeRes.ok) {
+                const treeData = await treeRes.json();
+                if (Array.isArray(treeData.tree)) {
+                    let matchedFile = null;
+                    if (type === 'cmliu') {
+                        // 匹配以 _worker.js 结尾的文件，优先根目录
+                        const files = treeData.tree.filter(item => item.type === 'blob' && item.path.endsWith('_worker.js'));
+                        if (files.length > 0) {
+                            matchedFile = files.find(f => f.path === '_worker.js') || files[0];
+                        }
+                    } else if (type === 'joey') {
+                        // 匹配包含“少年你相信光吗”或 _worker.js
+                        const files = treeData.tree.filter(item => item.type === 'blob' && (item.path.includes('少年你相信光吗') || item.path.endsWith('_worker.js')));
+                        if (files.length > 0) {
+                            matchedFile = files.find(f => f.path.includes('少年你相信光吗')) || files[0];
+                        }
+                    } else if (t.filePattern) {
+                        const files = treeData.tree.filter(item => item.type === 'blob' && item.path.includes(t.filePattern));
+                        if (files.length > 0) matchedFile = files[0];
+                    }
+
+                    if (matchedFile && matchedFile.path) {
+                        path = matchedFile.path;
+                    }
+                }
+            }
+
+            // 写入 KV 缓存
+            if (env && env.CONFIG_KV) {
+                await env.CONFIG_KV.put(cacheKey, JSON.stringify({ branch, path, time: Date.now() }));
+            }
+        } catch (e) {
+            console.error(`[GH Resolve Warning] ${type}: ${e.message}`);
+        }
+    }
+
+    const safePath = path.split('/').map(p => encodeURIComponent(p)).join('/');
     const apiUrl = `https://api.github.com/repos/${t.ghUser}/${t.ghRepo}/commits`;
-    const ref = sha || t.ghBranch;
+    const ref = sha || branch;
     const scriptUrl = `https://raw.githubusercontent.com/${t.ghUser}/${t.ghRepo}/${ref}/${safePath}`;
-    return { apiUrl, scriptUrl, branch: t.ghBranch };
-}
 
-function getAuthHeaders(email, key) {
-    return { "X-Auth-Email": email, "X-Auth-Key": key, "Content-Type": "application/json" };
-}
-
-function getUploadHeaders(email, key) {
-    return { "X-Auth-Email": email, "X-Auth-Key": key };
+    return { apiUrl, scriptUrl, branch, path };
 }
 
 
@@ -318,7 +442,7 @@ async function rotateUUIDAndDeploy(env, type, accounts, accountsKey) {
 
 async function handleGetCode(env, type) {
     try {
-        const { scriptUrl } = getGithubUrls(type);
+        const { scriptUrl } = await resolveGithubUrls(env, type);
         const res = await fetch(scriptUrl);
         if (!res.ok) throw new Error("Fetch failed: " + res.status);
         const code = await res.text();
@@ -332,7 +456,7 @@ async function handleCheckUpdate(env, type, mode, limit = 10) {
         const deployConfig = JSON.parse(await env.CONFIG_KV.get(DEPLOY_CONFIG_KEY) || '{"mode":"latest"}');
         const localSha = deployConfig.currentSha;
         const localTime = deployConfig.deployTime;
-        const { apiUrl, branch } = getGithubUrls(type);
+        const { apiUrl, branch, path } = await resolveGithubUrls(env, type);
 
         let fetchUrl = apiUrl + (mode === 'history' ? `?sha=${branch}&per_page=${limit}` : `?sha=${branch}&per_page=1`);
         const headers = { "User-Agent": "Cloudflare-Worker-Manager" };
@@ -357,7 +481,9 @@ async function handleCheckUpdate(env, type, mode, limit = 10) {
         return new Response(JSON.stringify({
             local: localCommitInfo,
             remote: { sha: latestCommit.sha, date: latestCommit.commit.committer.date, message: latestCommit.commit.message },
-            mode: deployConfig.mode
+            mode: deployConfig.mode,
+            resolvedBranch: branch,
+            resolvedPath: path
         }), { headers: { "Content-Type": "application/json" } });
 
     } catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: 500 }); }
@@ -380,10 +506,10 @@ async function handleBatchDeploy(env, reqData, accountsKey) {
     if (accountsToDeploy.length === 0) return new Response(JSON.stringify([{ name: "错误", success: false, msg: "未选择有效账号" }]), { headers: { "Content-Type": "application/json" } });
 
     let scriptContent = "";
-    const { scriptUrl } = getGithubUrls(template);
+    const { scriptUrl } = await resolveGithubUrls(env, template);
     try {
         const codeRes = await fetch(scriptUrl);
-        if (!codeRes.ok) throw new Error("代码拉取失败");
+        if (!codeRes.ok) throw new Error("代码拉取失败: " + codeRes.status);
         scriptContent = await codeRes.text();
         if (template === 'joey') scriptContent = 'var window = globalThis;\n' + scriptContent;
     } catch (e) {
@@ -392,11 +518,12 @@ async function handleBatchDeploy(env, reqData, accountsKey) {
 
     const logs = [];
     let updatedAccounts = false;
+    const compatDate = TEMPLATES[template]?.compatibilityDate || "2024-02-20";
 
     for (const acc of accountsToDeploy) {
         const log = { name: `${acc.alias} -> [${workerName}]`, success: false, msg: "" };
         try {
-            const jsonHeaders = getAuthHeaders(acc.email, acc.globalKey);
+            const jsonHeaders = getAuthHeaders(acc);
 
             let nsId = "";
             if (enableKV) {
@@ -443,12 +570,12 @@ async function handleBatchDeploy(env, reqData, accountsKey) {
                 });
             }
 
-            const metadata = { main_module: "index.js", bindings: bindings, compatibility_date: new Date().toISOString().split('T')[0] };
+            const metadata = { main_module: "index.js", bindings: bindings, compatibility_date: compatDate };
             const formData = new FormData();
             formData.append("metadata", JSON.stringify(metadata));
             formData.append("script", new Blob([scriptContent], { type: "application/javascript+module" }), "index.js");
 
-            const uploadHeaders = getUploadHeaders(acc.email, acc.globalKey);
+            const uploadHeaders = getUploadHeaders(acc);
             const deployRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acc.accountId}/workers/scripts/${workerName}`, {
                 method: "PUT", headers: uploadHeaders, body: formData
             });
@@ -456,13 +583,14 @@ async function handleBatchDeploy(env, reqData, accountsKey) {
             if (deployRes.ok) {
                 log.success = true;
                 let msgs = [];
+                const adminSuffix = TEMPLATES[template]?.adminPath || "";
                 if (customDomainPrefix && acc.defaultZoneId && acc.defaultZoneName) {
                     const hostname = `${customDomainPrefix}.${acc.defaultZoneName}`;
                     const domainRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acc.accountId}/workers/domains`, {
                         method: "PUT", headers: jsonHeaders,
                         body: JSON.stringify({ hostname: hostname, service: workerName, zone_id: acc.defaultZoneId })
                     });
-                    if (domainRes.ok) msgs.push(`✅ 绑定: https://${hostname}`);
+                    if (domainRes.ok) msgs.push(`✅ 域名: https://${hostname}${adminSuffix}`);
                     else msgs.push(`⚠️ 域名绑定失败`);
                 }
                 if (disableWorkersDev) {
@@ -476,7 +604,7 @@ async function handleBatchDeploy(env, reqData, accountsKey) {
                     });
                     const subRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acc.accountId}/workers/subdomain`, { headers: jsonHeaders });
                     const prefix = (await subRes.json()).result?.subdomain || "unknown";
-                    msgs.push(`✅ 默认: https://${workerName}.${prefix}.workers.dev`);
+                    msgs.push(`✅ 默认: https://${workerName}.${prefix}.workers.dev${adminSuffix}`);
                 }
                 log.msg = msgs.join(" | ");
                 if (!acc[`workers_${template}`]) acc[`workers_${template}`] = [];
@@ -522,17 +650,17 @@ async function coreDeployLogic(env, type, variables, deletedVariables, accountsK
             githubScriptContent = customCode;
             if (!deployedSha) {
                 // 获取最新 commit SHA
-                const { apiUrl } = getGithubUrls(type, null);
+                const { apiUrl, branch } = await resolveGithubUrls(env, type, null);
                 const headers = { "User-Agent": "CF-Worker" };
                 if (env.GITHUB_TOKEN) headers["Authorization"] = `token ${env.GITHUB_TOKEN}`;
                 try {
-                    const apiRes = await fetch(apiUrl + `?sha=${TEMPLATES[type].ghBranch}&per_page=1`, { headers });
+                    const apiRes = await fetch(apiUrl + `?sha=${branch}&per_page=1`, { headers });
                     if (apiRes.ok) deployedSha = (await apiRes.json())[0].sha;
                 } catch (e) { }
             }
         } else {
             // 从 GitHub 下载代码
-            const { scriptUrl, apiUrl } = getGithubUrls(type, shaForFetch);
+            const { scriptUrl, apiUrl, branch } = await resolveGithubUrls(env, type, shaForFetch);
             try {
                 const codeRes = await fetch(scriptUrl + `?t=${Date.now()}`);
                 if (!codeRes.ok) throw new Error(`代码下载失败: ${codeRes.status}`);
@@ -541,7 +669,7 @@ async function coreDeployLogic(env, type, variables, deletedVariables, accountsK
                 if (!deployedSha) {
                     const headers = { "User-Agent": "CF-Worker" };
                     if (env.GITHUB_TOKEN) headers["Authorization"] = `token ${env.GITHUB_TOKEN}`;
-                    const apiRes = await fetch(apiUrl + `?sha=${TEMPLATES[type].ghBranch}&per_page=1`, { headers });
+                    const apiRes = await fetch(apiUrl + `?sha=${branch}&per_page=1`, { headers });
                     if (apiRes.ok) {
                         const commitData = (await apiRes.json())[0];
                         deployedSha = commitData.sha;
@@ -566,8 +694,7 @@ async function coreDeployLogic(env, type, variables, deletedVariables, accountsK
             githubScriptContent = githubScriptContent.replace(tokenRegex, `const token = '${tokenVal}';`);
         }
 
-
-
+        const compatDate = TEMPLATES[type]?.compatibilityDate || "2024-02-20";
         const logs = [];
         for (const acc of accounts) {
             const targetWorkers = acc[`workers_${type}`] || [];
@@ -575,7 +702,7 @@ async function coreDeployLogic(env, type, variables, deletedVariables, accountsK
                 const logItem = { name: `${acc.alias} -> [${wName}]`, success: false, msg: "" };
                 try {
                     const baseUrl = `https://api.cloudflare.com/client/v4/accounts/${acc.accountId}/workers/scripts/${wName}`;
-                    const jsonHeaders = getAuthHeaders(acc.email, acc.globalKey);
+                    const jsonHeaders = getAuthHeaders(acc);
 
                     const bindingsRes = await fetch(`${baseUrl}/bindings`, { headers: jsonHeaders });
                     let currentBindings = bindingsRes.ok ? (await bindingsRes.json()).result : [];
@@ -591,12 +718,12 @@ async function coreDeployLogic(env, type, variables, deletedVariables, accountsK
                         });
                     }
 
-                    const metadata = { main_module: "index.js", bindings: currentBindings, compatibility_date: new Date().toISOString().split('T')[0] };
+                    const metadata = { main_module: "index.js", bindings: currentBindings, compatibility_date: compatDate };
                     const formData = new FormData();
                     formData.append("metadata", JSON.stringify(metadata));
                     formData.append("script", new Blob([githubScriptContent], { type: "application/javascript+module" }), "index.js");
 
-                    const uploadHeaders = getUploadHeaders(acc.email, acc.globalKey);
+                    const uploadHeaders = getUploadHeaders(acc);
                     const updateRes = await fetch(baseUrl, { method: "PUT", headers: uploadHeaders, body: formData });
 
                     if (updateRes.ok) {
@@ -643,7 +770,7 @@ async function fetchInternalStats(accounts) {
     return await Promise.all(accounts.map(async (acc) => {
         try {
             const res = await fetch("https://api.cloudflare.com/client/v4/graphql", {
-                method: "POST", headers: getAuthHeaders(acc.email, acc.globalKey),
+                method: "POST", headers: getAuthHeaders(acc),
                 body: JSON.stringify({ query: query, variables: { AccountID: acc.accountId, filter: { datetime_geq: todayStart.toISOString(), datetime_leq: now.toISOString() } } })
             });
             const data = await res.json();
@@ -664,10 +791,11 @@ async function handleStats(env, k) {
     } catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: 500 }); }
 }
 
-async function handleFetchBindings(accountId, email, key, workerName) {
+async function handleFetchBindings(accountId, email, key, apiToken, workerName) {
     try {
+        const headers = apiToken ? getAuthHeaders({ apiToken }) : getAuthHeaders(email, key);
         const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/bindings`, {
-            headers: getAuthHeaders(email, key)
+            headers
         });
         const data = await res.json();
         const bindings = data.result
@@ -677,10 +805,11 @@ async function handleFetchBindings(accountId, email, key, workerName) {
     } catch (e) { return new Response(JSON.stringify({ success: false, msg: e.message }), { status: 500 }); }
 }
 
-async function handleGetZones(accountId, email, key) {
+async function handleGetZones(accountId, email, key, apiToken) {
     try {
+        const headers = apiToken ? getAuthHeaders({ apiToken }) : getAuthHeaders(email, key);
         const res = await fetch(`https://api.cloudflare.com/client/v4/zones?account.id=${accountId}&per_page=50`, {
-            headers: getAuthHeaders(email, key)
+            headers
         });
         const data = await res.json();
         const zones = data.result.map(z => ({ id: z.id, name: z.name }));
@@ -688,10 +817,11 @@ async function handleGetZones(accountId, email, key) {
     } catch (e) { return new Response(JSON.stringify({ success: false, msg: e.message }), { status: 500 }); }
 }
 
-async function handleGetAllWorkers(accountId, email, key) {
+async function handleGetAllWorkers(accountId, email, key, apiToken) {
     try {
+        const headers = apiToken ? getAuthHeaders({ apiToken }) : getAuthHeaders(email, key);
         const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`, {
-            headers: getAuthHeaders(email, key)
+            headers
         });
         const data = await res.json();
         const workers = data.result.map(w => ({
@@ -703,9 +833,9 @@ async function handleGetAllWorkers(accountId, email, key) {
     } catch (e) { return new Response(JSON.stringify({ success: false, msg: e.message }), { status: 500 }); }
 }
 
-async function handleDeleteWorker(env, accountId, email, key, workerName, deleteKv) {
+async function handleDeleteWorker(env, accountId, email, key, apiToken, workerName, deleteKv) {
     try {
-        const headers = getAuthHeaders(email, key);
+        const headers = apiToken ? getAuthHeaders({ apiToken }) : getAuthHeaders(email, key);
 
         let kvNamespaceIds = [];
         if (deleteKv) {
@@ -756,9 +886,9 @@ async function handleDeleteWorker(env, accountId, email, key, workerName, delete
     } catch (e) { return new Response(JSON.stringify({ success: false, msg: e.message }), { status: 500 }); }
 }
 
-async function handleGetSubdomain(accountId, email, key) {
+async function handleGetSubdomain(accountId, email, key, apiToken) {
     try {
-        const headers = getAuthHeaders(email, key);
+        const headers = apiToken ? getAuthHeaders({ apiToken }) : getAuthHeaders(email, key);
         const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`, { headers });
         const data = await res.json();
         if (data.success) {
@@ -769,11 +899,10 @@ async function handleGetSubdomain(accountId, email, key) {
     } catch (e) { return new Response(JSON.stringify({ success: false, msg: e.message }), { status: 500 }); }
 }
 
-async function handleChangeSubdomain(accountId, email, key, newSubdomain) {
+async function handleChangeSubdomain(accountId, email, key, apiToken, newSubdomain) {
     try {
-        const headers = getAuthHeaders(email, key);
+        const headers = apiToken ? getAuthHeaders({ apiToken }) : getAuthHeaders(email, key);
         // Cloudflare API PUT subdomain 是 create-only，已有子域名需先 DELETE 再 PUT
-        // 先尝试删除旧子域名（可能失败，忽略错误继续）
         try {
             await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`, {
                 method: 'DELETE', headers
@@ -790,7 +919,6 @@ async function handleChangeSubdomain(accountId, email, key, newSubdomain) {
             return new Response(JSON.stringify({ success: true, subdomain: data.result?.subdomain || newSubdomain }), { headers: { "Content-Type": "application/json" } });
         } else {
             const errMsg = data.errors?.[0]?.message || '修改失败';
-            // 如果仍然报已存在，说明 CF 不支持通过 API 修改，提示用户去 Dashboard
             if (errMsg.includes('already has')) {
                 return new Response(JSON.stringify({ success: false, msg: 'Cloudflare 不支持通过 API 修改已有子域名，请到 Dashboard → Workers & Pages → 设置中手动修改。' }), { headers: { "Content-Type": "application/json" } });
             }
@@ -808,7 +936,7 @@ async function handleFix1101(env, type) {
     const logs = [];
 
     // 1. 下载最新代码
-    const { scriptUrl, apiUrl } = getGithubUrls(type, null);
+    const { scriptUrl, apiUrl, branch } = await resolveGithubUrls(env, type, null);
     let freshCode;
     try {
         const codeRes = await fetch(scriptUrl + `?t=${Date.now()}`);
@@ -823,9 +951,11 @@ async function handleFix1101(env, type) {
     try {
         const hdrs = { "User-Agent": "CF-Worker" };
         if (env.GITHUB_TOKEN) hdrs["Authorization"] = `token ${env.GITHUB_TOKEN}`;
-        const apiRes = await fetch(apiUrl + `?sha=${TEMPLATES[type].ghBranch}&per_page=1`, { headers: hdrs });
+        const apiRes = await fetch(apiUrl + `?sha=${branch}&per_page=1`, { headers: hdrs });
         if (apiRes.ok) latestSha = (await apiRes.json())[0].sha;
     } catch (e) { }
+
+    const compatDate = TEMPLATES[type]?.compatibilityDate || "2024-02-20";
 
     for (const acc of accounts) {
         const targetWorkers = acc[`workers_${type}`] || [];
@@ -834,7 +964,7 @@ async function handleFix1101(env, type) {
             continue;
         }
 
-        const headers = getAuthHeaders(acc.email, acc.globalKey);
+        const headers = getAuthHeaders(acc);
 
         for (const wName of targetWorkers) {
             const logItem = { name: `${acc.alias} → [${wName}]`, success: false, msg: "" };
@@ -915,13 +1045,13 @@ async function handleFix1101(env, type) {
                 const metadata = {
                     main_module: "index.js",
                     bindings: restoredBindings,
-                    compatibility_date: new Date().toISOString().split('T')[0]
+                    compatibility_date: compatDate
                 };
                 const formData = new FormData();
                 formData.append("metadata", JSON.stringify(metadata));
                 formData.append("script", new Blob([deployCode], { type: "application/javascript+module" }), "index.js");
 
-                const uploadHeaders = getUploadHeaders(acc.email, acc.globalKey);
+                const uploadHeaders = getUploadHeaders(acc);
                 const uploadRes = await fetch(baseUrl, { method: "PUT", headers: uploadHeaders, body: formData });
 
                 if (uploadRes.ok) {
@@ -1116,483 +1246,773 @@ document.getElementById('login_code').addEventListener('keydown',e=>{if(e.key===
 // ==========================================
 function mainHtml() {
     return `
-  <!DOCTYPE html>
-  <html lang="zh-CN">
+<!DOCTYPE html>
+<html lang="zh-CN">
   <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="manifest" href="/manifest.json">
-    <title>Worker 智能中控 (V10.10.0)</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cloudflare Worker 多账号中控管理系统</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
     <style>
       :root {
-        --bg-page: #f1f5f9; --bg-card: #ffffff; --bg-card-alt: #f8fafc; --bg-input: #ffffff;
-        --bg-header: #ffffff; --bg-toolbar: #f8fafc;
-        --text-primary: #1e293b; --text-secondary: #475569; --text-muted: #94a3b8;
-        --border-color: #e2e8f0; --border-light: #f1f5f9;
-        --shadow-color: rgba(0,0,0,0.08);
-        --table-header-bg: #f8fafc; --table-row-hover: #f8fafc;
+        --el-font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        --el-mono-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+        --el-color-primary: #409eff;
+        --el-color-primary-light: #ecf5ff;
+        --el-color-primary-hover: #66b1ff;
+        --el-color-success: #67c23a;
+        --el-color-success-light: #f0f9eb;
+        --el-color-warning: #e6a23c;
+        --el-color-warning-light: #fdf6ec;
+        --el-color-danger: #f56c6c;
+        --el-color-danger-light: #fef0f0;
+        --el-color-info: #909399;
+        
+        --bg-page: #f0f2f5;
+        --bg-card: #ffffff;
+        --bg-subtle: #f8fafc;
+        --bg-input: #ffffff;
+        --border-color: #dcdfe6;
+        --border-light: #ebeef5;
+        --text-primary: #303133;
+        --text-regular: #606266;
+        --text-secondary: #909399;
+        --text-placeholder: #c0c4cc;
+        --shadow-base: 0 2px 12px 0 rgba(0, 0, 0, 0.06);
+        --shadow-card: 0 1px 4px 0 rgba(0, 0, 0, 0.05);
       }
+
       [data-theme="dark"] {
-        --bg-page: transparent; --bg-card: rgba(15,23,42,0.75); --bg-card-alt: rgba(30,41,59,0.7); --bg-input: rgba(30,41,59,0.8);
-        --bg-header: rgba(15,23,42,0.8); --bg-toolbar: rgba(30,41,59,0.6);
-        --text-primary: #e2e8f0; --text-secondary: #cbd5e1; --text-muted: #94a3b8;
-        --border-color: rgba(71,85,105,0.5); --border-light: rgba(51,65,85,0.5);
-        --shadow-color: rgba(0,0,0,0.3);
-        --table-header-bg: rgba(30,41,59,0.8); --table-row-hover: rgba(51,65,85,0.4);
+        --bg-page: #0f172a;
+        --bg-card: #1e293b;
+        --bg-subtle: #141e33;
+        --bg-input: #0f172a;
+        --border-color: #334155;
+        --border-light: #1e293b;
+        --text-primary: #f8fafc;
+        --text-regular: #cbd5e1;
+        --text-secondary: #94a3b8;
+        --text-placeholder: #64748b;
+        --shadow-base: 0 4px 20px 0 rgba(0, 0, 0, 0.4);
+        --shadow-card: 0 2px 8px 0 rgba(0, 0, 0, 0.3);
       }
-      body { background: var(--bg-page); color: var(--text-primary); transition: background 0.4s, color 0.4s; }
-      [data-theme="dark"] body { background: transparent; }
-      #starfield { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; background: #0f172a; display: none; }
-      [data-theme="dark"] #starfield { display: block; }
-      [data-theme="dark"] .bg-white, [data-theme="dark"] .project-card,
-      [data-theme="dark"] .bg-slate-100 {
-        background: var(--bg-card) !important; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-        border: 1px solid var(--border-color) !important;
-      }
-      [data-theme="dark"] header, [data-theme="dark"] .bg-white.rounded.shadow {
-        background: var(--bg-header) !important; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      }
-      [data-theme="dark"] .bg-slate-50, [data-theme="dark"] .bg-gray-50 {
-        background: var(--bg-card-alt) !important;
-      }
-      [data-theme="dark"] .text-slate-800, [data-theme="dark"] .text-gray-700,
-      [data-theme="dark"] .text-slate-700, [data-theme="dark"] .text-gray-600 {
-        color: var(--text-primary) !important;
-      }
-      [data-theme="dark"] .text-gray-500, [data-theme="dark"] .text-gray-400,
-      [data-theme="dark"] .text-gray-300 {
-        color: var(--text-muted) !important;
-      }
-      [data-theme="dark"] .border-slate-200, [data-theme="dark"] .border-gray-100,
-      [data-theme="dark"] .border-gray-200 {
-        border-color: var(--border-color) !important;
-      }
-      [data-theme="dark"] .input-field {
-        background: var(--bg-input) !important; color: var(--text-primary) !important;
-        border-color: var(--border-color) !important;
-      }
-      [data-theme="dark"] .input-field::placeholder { color: var(--text-muted) !important; }
-      [data-theme="dark"] .compact-table th { background: var(--table-header-bg) !important; color: var(--text-muted) !important; }
-      [data-theme="dark"] .compact-table td { border-bottom-color: var(--border-light) !important; color: var(--text-secondary) !important; }
-      [data-theme="dark"] .compact-table tr:hover { background: var(--table-row-hover) !important; }
-      [data-theme="dark"] .bg-red-50    { background: rgba(127,29,29,0.2) !important; }
-      [data-theme="dark"] .bg-blue-50   { background: rgba(30,58,138,0.2) !important; }
-      [data-theme="dark"] .bg-green-50  { background: rgba(20,83,45,0.2) !important; }
-      [data-theme="dark"] .bg-purple-50 { background: rgba(88,28,135,0.15) !important; }
-      [data-theme="dark"] .bg-orange-50 { background: rgba(124,45,18,0.2) !important; }
-      [data-theme="dark"] .bg-indigo-50 { background: rgba(49,46,129,0.2) !important; }
-      [data-theme="dark"] .border-red-100   { border-color: rgba(127,29,29,0.3) !important; }
-      [data-theme="dark"] .border-blue-100  { border-color: rgba(30,58,138,0.3) !important; }
-      [data-theme="dark"] .border-green-100 { border-color: rgba(20,83,45,0.3) !important; }
-      [data-theme="dark"] .border-purple-100 { border-color: rgba(88,28,135,0.3) !important; }
-      [data-theme="dark"] .border-orange-100,.border-orange-200 { border-color: rgba(124,45,18,0.3) !important; }
-      [data-theme="dark"] .border-indigo-100 { border-color: rgba(49,46,129,0.3) !important; }
-      [data-theme="dark"] select, [data-theme="dark"] input[type="number"],
-      [data-theme="dark"] input[type="text"], [data-theme="dark"] input[type="password"] {
-        background: var(--bg-input) !important; color: var(--text-primary) !important;
-        border-color: var(--border-color) !important;
-      }
-      [data-theme="dark"] .shadow { box-shadow: 0 2px 8px var(--shadow-color) !important; }
-      /* Modal dark overrides */
-      [data-theme="dark"] #batch_deploy_modal > div > div:first-child,
-      [data-theme="dark"] #account_manage_modal > div,
-      [data-theme="dark"] #history_modal > div > div,
-      [data-theme="dark"] #sync_select_modal > div {
-        background: rgba(15,23,42,0.95) !important; backdrop-filter: blur(20px);
-        border: 1px solid var(--border-color) !important;
-      }
-      [data-theme="dark"] #batch_deploy_modal .p-4,
-      [data-theme="dark"] #account_manage_modal .p-4 {
+
+      body {
+        font-family: var(--el-font-family);
+        background-color: var(--bg-page);
         color: var(--text-primary);
+        transition: background-color 0.3s, color 0.3s;
       }
-      /* Theme toggle button */
-      .theme-toggle { cursor: pointer; font-size: 18px; width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--border-color);
-        display: flex; align-items: center; justify-content: center; transition: all 0.3s; background: var(--bg-card); }
-      .theme-toggle:hover { transform: scale(1.1); box-shadow: 0 0 12px rgba(139,92,246,0.4); }
-      /* Original styles */
-      .input-field { border: 1px solid #cbd5e1; padding: 0.25rem 0.5rem; width:100%; border-radius: 4px; font-size: 0.8rem; } 
-      .input-field:focus { border-color:#3b82f6; outline:none; }
-      .toggle-checkbox:checked { right: 0; border-color: #68D391; }
-      .toggle-checkbox:checked + .toggle-label { background-color: #68D391; }
-      .compact-table th, .compact-table td { padding: 8px; font-size: 13px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
-      .compact-table th { background-color: #f8fafc; color: #64748b; font-weight: 600; text-align: left; }
+
+      code, pre, .font-mono {
+        font-family: var(--el-mono-family);
+      }
+
+      /* Element UI 标准卡片 */
+      .el-card {
+        background-color: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        box-shadow: var(--shadow-card);
+        transition: all 0.25s ease;
+      }
+      .el-card:hover {
+        box-shadow: var(--shadow-base);
+      }
+
+      /* 标准按钮体系 */
+      .el-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 500;
+        font-size: 13px;
+        border-radius: 6px;
+        padding: 6px 14px;
+        transition: all 0.2s;
+        cursor: pointer;
+        user-select: none;
+        border: 1px solid transparent;
+      }
+      .el-btn-primary { background: #409eff; color: #fff; }
+      .el-btn-primary:hover { background: #66b1ff; }
+      .el-btn-success { background: #67c23a; color: #fff; }
+      .el-btn-success:hover { background: #85ce61; }
+      .el-btn-warning { background: #e6a23c; color: #fff; }
+      .el-btn-warning:hover { background: #ebb563; }
+      .el-btn-danger { background: #f56c6c; color: #fff; }
+      .el-btn-danger:hover { background: #f78989; }
+      .el-btn-default { background: var(--bg-card); color: var(--text-regular); border-color: var(--border-color); }
+      .el-btn-default:hover { color: #409eff; border-color: #c6e2ff; background: var(--el-color-primary-light); }
+      
+      .el-btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 4px; }
+      .el-btn-xs { padding: 2px 6px; font-size: 11px; border-radius: 4px; }
+
+      /* 表单输入控件 */
+      .el-input {
+        background-color: var(--bg-input);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 13px;
+        transition: border-color 0.2s, box-shadow 0.2s;
+        width: 100%;
+        outline: none;
+      }
+      .el-input:focus {
+        border-color: var(--el-color-primary);
+        box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.15);
+      }
+      .el-input::placeholder { color: var(--text-placeholder); }
+
+      /* 标签页 Tabs */
+      .el-tab-nav {
+        display: flex;
+        border-bottom: 2px solid var(--border-light);
+        gap: 8px;
+      }
+      .el-tab-item {
+        padding: 10px 18px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        cursor: pointer;
+        position: relative;
+        transition: all 0.2s;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+      }
+      .el-tab-item:hover { color: var(--el-color-primary); }
+      .el-tab-item.active {
+        color: var(--el-color-primary);
+        border-bottom-color: var(--el-color-primary);
+      }
+
+      /* 表格样式 */
+      .el-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 13px;
+      }
+      .el-table th {
+        background-color: var(--bg-subtle);
+        color: var(--text-regular);
+        font-weight: 600;
+        padding: 10px 14px;
+        text-align: left;
+        border-bottom: 1px solid var(--border-color);
+        white-space: nowrap;
+      }
+      .el-table td {
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border-light);
+        color: var(--text-regular);
+        transition: background-color 0.15s;
+        white-space: nowrap;
+      }
+      .el-table tr:hover td {
+        background-color: var(--bg-subtle);
+      }
+
+      /* 徽标 Tag */
+      .el-tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        font-size: 11px;
+        font-weight: 600;
+        border-radius: 4px;
+        border: 1px solid transparent;
+      }
+      .el-tag-blue { background: #ecf5ff; color: #409eff; border-color: #d9ecff; }
+      .el-tag-green { background: #f0f9eb; color: #67c23a; border-color: #e1f3d8; }
+      .el-tag-orange { background: #fdf6ec; color: #e6a23c; border-color: #faecd8; }
+      .el-tag-red { background: #fef0f0; color: #f56c6c; border-color: #fde2e2; }
+      .el-tag-purple { background: #f4f0ff; color: #722ed1; border-color: #d3adf7; }
+      .el-tag-gray { background: #f4f4f5; color: #909399; border-color: #e9e9eb; }
+
+      [data-theme="dark"] .el-tag-blue { background: rgba(64,158,255,0.15); border-color: rgba(64,158,255,0.3); }
+      [data-theme="dark"] .el-tag-green { background: rgba(103,194,58,0.15); border-color: rgba(103,194,58,0.3); }
+      [data-theme="dark"] .el-tag-orange { background: rgba(230,162,60,0.15); border-color: rgba(230,162,60,0.3); }
+      [data-theme="dark"] .el-tag-red { background: rgba(245,108,108,0.15); border-color: rgba(245,108,108,0.3); }
+      [data-theme="dark"] .el-tag-purple { background: rgba(114,46,209,0.15); border-color: rgba(114,46,209,0.3); }
+      [data-theme="dark"] .el-tag-gray { background: rgba(144,147,153,0.15); border-color: rgba(144,147,153,0.3); }
+
+      /* 背景画布 */
+      #starfield {
+        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+        pointer-events: none; z-index: -1; opacity: 0; transition: opacity 0.5s;
+      }
+      [data-theme="dark"] #starfield { opacity: 1; }
+
+      /* 自定义滚动条 */
       ::-webkit-scrollbar { width: 6px; height: 6px; }
-      ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-      .animate-fade-in { animation: fadeIn 0.3s ease-out; }
-      @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
-      @keyframes twinkle { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+      ::-webkit-scrollbar-thumb { background: #c0c4cc; border-radius: 3px; }
+      [data-theme="dark"] ::-webkit-scrollbar-thumb { background: #475569; }
+      ::-webkit-scrollbar-track { background: transparent; }
+
+      /* 动画 */
+      .animate-fade-in { animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+      @keyframes fadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
     </style>
   </head>
-  <body class="bg-slate-100 p-2 md:p-4 min-h-screen text-slate-700">
+  <body class="p-3 md:p-6 min-h-screen">
     <canvas id="starfield"></canvas>
-    <div class="max-w-7xl mx-auto space-y-4">
+    
+    <div class="max-w-[1550px] mx-auto space-y-4">
       
-      <header class="bg-white px-4 py-3 md:px-6 md:py-4 rounded shadow flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-          <div class="flex-none">
-              <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">🚀 Worker 部署中控 <span class="text-xs bg-purple-600 text-white px-2 py-0.5 rounded ml-2">V10.10.0</span></h1>
-              <div class="text-[10px] text-gray-400 mt-1">安全加固 · 熔断轮换 · 子域名管理 · 星空主题</div>
-          </div>
-          <div id="logs" class="bg-slate-900 text-green-400 p-2 rounded text-xs font-mono hidden max-h-[80px] lg:max-h-[50px] overflow-y-auto shadow-inner w-full lg:flex-1 lg:mx-4 order-2 lg:order-none"></div>
-          
-          <div class="flex flex-wrap items-center gap-2 md:gap-3 bg-slate-50 p-2 rounded border border-slate-200 w-full lg:w-auto flex-none text-xs">
-               <button onclick="toggleTheme()" class="theme-toggle" id="theme_btn" title="切换主题">🌙</button>
-               <div class="w-px h-4 bg-gray-300 mx-0"></div>
-               <button onclick="openWorkbench()" id="btn_workbench" class="bg-slate-700 text-white px-2 py-1 rounded hover:bg-slate-800 font-bold">📋 工作台</button>
-               <button onclick="openBatchDeployModal()" class="bg-indigo-600 text-white px-2 py-1 rounded hover:bg-indigo-700 font-bold">✨ 批量部署</button>
-               <button onclick="accounts.some(a => (a.workers_cmliu && a.workers_cmliu.length > 0) || (a.workers_joey && a.workers_joey.length > 0)) ? showYxipModal() : alert('必须先部署至少一个支持的代理项目 (CMLiu 或 Joey) 才能使用反代落地部署功能！')" class="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600 font-bold shadow-sm">⚡ 反代落地部署</button>
-               <div class="w-px h-4 bg-gray-300 mx-1"></div>
-               
-               <div class="flex items-center gap-1">
-                  <span>自动:</span>
-                  <div class="relative inline-block w-8 align-middle select-none">
-                      <input type="checkbox" id="auto_update_toggle" class="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 appearance-none cursor-pointer border-gray-300"/>
-                      <label for="auto_update_toggle" class="toggle-label block overflow-hidden h-4 rounded-full bg-gray-300 cursor-pointer"></label>
+      <!-- 顶部 Header 导航条 -->
+      <header class="el-card p-4 md:px-6 md:py-4 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+          <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-xl shadow-md font-bold">
+                ⚡
+              </div>
+              <div>
+                  <div class="flex items-center gap-2">
+                      <h1 class="text-base md:text-lg font-bold text-slate-800 tracking-tight" style="color:var(--text-primary)">
+                        Cloudflare Worker 多账号中控管理系统
+                      </h1>
+                      <span class="el-tag el-tag-blue font-mono">V10.11.0</span>
+                      <span class="el-tag el-tag-green flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> 运行正常</span>
                   </div>
+                  <div class="text-xs text-slate-400 mt-0.5" style="color:var(--text-secondary)">
+                    动态分支感知 · 双轨鉴权(Token/Key) · 兼容锁定 · 自动熔断防护 · 全球 YXIP 调度
+                  </div>
+              </div>
+          </div>
+          
+          <!-- 工具栏操作按钮组 -->
+          <div class="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
+               <button onclick="openBatchDeployModal()" class="el-btn el-btn-primary shadow-sm flex items-center gap-1.5">
+                  <span>✨</span> 批量部署
+               </button>
+               
+               <button onclick="accounts.some(a => (a.workers_cmliu && a.workers_cmliu.length > 0) || (a.workers_joey && a.workers_joey.length > 0)) ? showYxipModal() : alert('必须先部署至少一个支持的代理项目 (CMLiu 或 Joey) 才能使用反代落地部署功能！')" class="el-btn el-btn-warning shadow-sm flex items-center gap-1.5">
+                  <span>⚡</span> 反代落地部署
+               </button>
+
+               <button onclick="openWorkbench()" id="btn_workbench" class="el-btn el-btn-default flex items-center gap-1.5 font-bold">
+                  <span>📋</span> 工作台
+               </button>
+
+               <button onclick="manualReportIssue()" class="el-btn el-btn-default text-red-500 hover:text-red-600 flex items-center gap-1.5" title="一键复制诊断日志并直达 GitHub Issues 提交问题">
+                  <span>🐛</span> 故障诊断
+               </button>
+
+               <div class="h-6 w-px bg-slate-200 mx-1" style="background-color:var(--border-color)"></div>
+
+               <!-- 自动巡检设置区 -->
+               <div class="flex items-center gap-2 px-3 py-1.5 rounded-md border" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                   <div class="flex items-center gap-1.5 text-xs font-semibold" style="color:var(--text-regular)">
+                       <span>自动巡检:</span>
+                       <input type="checkbox" id="auto_update_toggle" class="w-4 h-4 text-blue-600 rounded cursor-pointer accent-blue-600">
+                   </div>
+                   <div class="flex items-center gap-1 text-xs" style="color:var(--text-secondary)">
+                       <input type="number" id="auto_update_interval" value="30" class="el-input py-0.5 px-1.5 w-12 text-center text-xs">
+                       <span>分</span>
+                   </div>
+                   <div class="flex items-center gap-1 text-xs font-semibold text-rose-600">
+                       <span>熔断:</span>
+                       <input type="number" id="fuse_threshold" value="0" placeholder="0" class="el-input py-0.5 px-1.5 w-12 text-center text-xs font-bold text-rose-600 border-rose-200">
+                   </div>
+                   <button onclick="saveAutoConfig()" class="el-btn el-btn-default el-btn-xs">保存</button>
                </div>
 
-               <div class="flex items-center gap-1">
-                  <input type="number" id="auto_update_interval" value="30" class="w-8 text-center border rounded py-0.5"><span>分</span>
-               </div>
-               <div class="flex items-center gap-1">
-                  <span class="text-red-600 font-bold">熔断:</span>
-                  <input type="number" id="fuse_threshold" value="0" placeholder="0" class="w-8 text-center border border-red-300 bg-red-50 rounded py-0.5 font-bold text-red-600">
-               </div>
-               <button onclick="saveAutoConfig()" class="bg-slate-700 text-white px-2 py-1 rounded hover:bg-slate-800 font-bold ml-1">保存</button>
+               <!-- 主题切换 -->
+               <button onclick="toggleTheme()" class="el-btn el-btn-default p-2 text-base rounded-full" id="theme_btn" title="切换深浅主题">🌙</button>
           </div>
       </header>
-      
-      <div id="layout_container" class="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div id="section_accounts" class="lg:col-span-7 space-y-4">
-            <div class="bg-white p-4 rounded shadow flex-1">
-              <div class="flex justify-between items-center mb-3">
-                   <h2 class="font-bold text-gray-700 text-sm">📡 账号列表</h2>
-                   <div class="flex gap-2">
-                       <button onclick="loadStats()" id="btn_stats" class="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100">🔄 刷新用量</button>
-                       <button onclick="resetFormForAdd()" class="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded">➕ 添加账号</button>
-                   </div>
-              </div>
-              
-              <div id="account_form" class="hidden bg-slate-50 p-3 mb-3 border rounded text-xs space-y-3">
-                 <div class="flex gap-2">
-                    <input id="in_alias" placeholder="备注 (Alias)" class="input-field w-1/3">
-                    <input id="in_id" placeholder="Account ID" class="input-field w-2/3">
-                 </div>
-                 <div class="flex gap-2">
-                    <input id="in_email" placeholder="Login Email" class="input-field w-1/2">
-                    <input id="in_gkey" type="password" placeholder="Global API Key" class="input-field w-1/2">
-                 </div>
-                 <div class="bg-purple-50 p-2 rounded border border-purple-100 flex gap-2 items-center">
-                    <span class="text-purple-700 font-bold w-20">预设域名:</span>
-                    <select id="in_zone_select" class="input-field w-full" onchange="updateZoneInfo()">
-                        <option value="">(请先填写API信息后点击读取)</option>
-                    </select>
-                    <input type="hidden" id="in_zone_name">
-                    <input type="hidden" id="in_zone_id">
-                    <button onclick="fetchZonesForAccount()" class="bg-purple-600 text-white px-2 py-1 rounded hover:bg-purple-700 flex-none w-20">☁️ 读取</button>
-                 </div>
 
-                 <div class="grid grid-cols-3 gap-2">
-                    <input id="in_workers_cmliu" placeholder="🔴 CMliu Worker (选填)" class="input-field bg-red-50">
-                    <input id="in_workers_joey" placeholder="🔵 Joey Worker (选填)" class="input-field bg-blue-50">
-                    <input id="in_workers_ech" placeholder="🟢 ECH Worker (选填)" class="input-field bg-green-50">
-                 </div>
-                 <div class="flex gap-2 pt-2">
-                    <button onclick="saveAccount()" id="btn_save_acc" class="flex-1 bg-slate-700 text-white py-1.5 rounded font-bold">💾 保存账号</button>
-                    <button onclick="deleteFromEdit()" id="btn_del_edit" class="hidden flex-none bg-red-100 text-red-600 px-3 py-1.5 rounded">🗑️</button>
-                    <button onclick="cancelEdit()" class="flex-none bg-gray-200 text-gray-600 px-3 py-1.5 rounded">❌</button>
-                 </div>
-              </div>
-              
-              <div id="account_list_container" class="overflow-x-auto min-h-[300px]">
-                  <table class="w-full compact-table">
-                      <thead>
-                          <tr><th>备注</th><th>预设域名</th><th>Worker</th><th>流量</th><th>占比</th><th class="text-right">操作</th></tr>
-                      </thead>
-                      <tbody id="account_body"></tbody>
-                  </table>
-              </div>
+      <!-- 核心工作区：左右双分栏 -->
+      <div id="layout_container" class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+        
+        <!-- 左栏：账号矩阵管理 (占 7 份) -->
+        <div id="section_accounts" class="lg:col-span-7 space-y-4">
+            <div class="el-card p-5">
+               <!-- 账号表头 -->
+               <div class="flex justify-between items-center mb-4 pb-3 border-b" style="border-color:var(--border-light)">
+                    <div class="flex items-center gap-2">
+                        <span class="text-base font-bold flex items-center gap-2" style="color:var(--text-primary)">
+                          <span>📡</span> Cloudflare 账号矩阵
+                        </span>
+                        <span id="account_count_badge" class="el-tag el-tag-gray text-xs">0 个账号</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="loadStats()" id="btn_stats" class="el-btn el-btn-default el-btn-sm flex items-center gap-1">
+                           <span>🔄</span> 刷新用量
+                        </button>
+                        <button onclick="resetFormForAdd()" class="el-btn el-btn-primary el-btn-sm flex items-center gap-1">
+                           <span>➕</span> 添加账号
+                        </button>
+                    </div>
+               </div>
+               
+               <!-- 添加 / 编辑账号卡片 (Drawer 展开模式) -->
+               <div id="account_form" class="hidden p-4 mb-4 rounded-lg border text-xs space-y-3.5 animate-fade-in" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                  <div class="font-bold text-sm flex items-center justify-between pb-2 border-b" style="color:var(--text-primary); border-color:var(--border-light)">
+                      <span>⚙️ 编辑 / 新增 Cloudflare 账号</span>
+                      <button onclick="cancelEdit()" class="text-slate-400 hover:text-slate-600 text-base font-bold">×</button>
+                  </div>
+                  
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                     <div>
+                        <label class="block text-xs font-semibold mb-1" style="color:var(--text-regular)">账号别名 (Alias)</label>
+                        <input id="in_alias" placeholder="例如: Account-01" class="el-input font-bold">
+                     </div>
+                     <div class="md:col-span-2">
+                        <label class="block text-xs font-semibold mb-1" style="color:var(--text-regular)">Account ID (CF 账户 ID)</label>
+                        <input id="in_id" placeholder="可在 Cloudflare 仪表盘右下角查看" class="el-input font-mono">
+                     </div>
+                  </div>
+                  
+                  <!-- 认证模式选项 -->
+                  <div class="p-3 bg-white dark:bg-slate-900 rounded-md border space-y-2" style="border-color:var(--border-color)">
+                     <div class="flex justify-between items-center">
+                         <span class="font-bold text-xs" style="color:var(--text-primary)">🔐 鉴权凭据类型:</span>
+                         <div class="flex items-center gap-4 text-xs">
+                             <label class="flex items-center gap-1.5 cursor-pointer font-semibold text-blue-600">
+                                <input type="radio" name="auth_mode" value="token" checked onchange="toggleAuthFields()" class="accent-blue-600"> 
+                                API Token (推荐)
+                             </label>
+                             <label class="flex items-center gap-1.5 cursor-pointer font-semibold" style="color:var(--text-regular)">
+                                <input type="radio" name="auth_mode" value="key" onchange="toggleAuthFields()" class="accent-blue-600"> 
+                                Global API Key
+                             </label>
+                         </div>
+                     </div>
+                     <div id="field_auth_token" class="space-y-1 pt-1">
+                         <input id="in_api_token" type="password" placeholder="请输入 Cloudflare API Token (需具备 Workers & KV 读写权限)" class="el-input font-mono">
+                         <div class="text-[11px] text-slate-400">💡 推荐使用 API Token，细粒度权限控制且无需暴露登录邮箱。</div>
+                     </div>
+                     <div id="field_auth_key" class="hidden grid grid-cols-2 gap-2 pt-1">
+                         <input id="in_email" placeholder="Cloudflare 登录邮箱" class="el-input">
+                         <input id="in_gkey" type="password" placeholder="Global API Key" class="el-input font-mono">
+                     </div>
+                  </div>
+
+                  <!-- 预设域名 -->
+                  <div class="p-3 rounded-md border flex flex-col md:flex-row gap-2 items-start md:items-center" style="background-color:var(--bg-card); border-color:var(--border-color)">
+                     <span class="font-bold text-xs flex-none" style="color:var(--text-primary)">🌐 预设托管域名:</span>
+                     <select id="in_zone_select" class="el-input flex-1" onchange="updateZoneInfo()">
+                         <option value="">(请先填写认证信息后点击读取)</option>
+                     </select>
+                     <input type="hidden" id="in_zone_name">
+                     <input type="hidden" id="in_zone_id">
+                     <button onclick="fetchZonesForAccount()" class="el-btn el-btn-default el-btn-sm flex-none">
+                        <span>☁️</span> 自动读取域名
+                     </button>
+                  </div>
+
+                  <!-- 绑定 Worker 实例名称 -->
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                     <div>
+                        <label class="block text-[11px] font-semibold text-rose-600 mb-1">🔴 CMLiu Worker 名称</label>
+                        <input id="in_workers_cmliu" placeholder="多个用英文逗号分隔" class="el-input font-mono text-xs">
+                     </div>
+                     <div>
+                        <label class="block text-[11px] font-semibold text-blue-600 mb-1">🔵 Joey Worker 名称</label>
+                        <input id="in_workers_joey" placeholder="多个用英文逗号分隔" class="el-input font-mono text-xs">
+                     </div>
+                     <div>
+                        <label class="block text-[11px] font-semibold text-emerald-600 mb-1">🟢 ECH Worker 名称</label>
+                        <input id="in_workers_ech" placeholder="多个用英文逗号分隔" class="el-input font-mono text-xs">
+                     </div>
+                  </div>
+
+                  <!-- 保存与取消 -->
+                  <div class="flex gap-2 pt-2 border-t" style="border-color:var(--border-light)">
+                     <button onclick="saveAccount()" id="btn_save_acc" class="flex-1 el-btn el-btn-primary">💾 保存账号配置</button>
+                     <button onclick="deleteFromEdit()" id="btn_del_edit" class="hidden el-btn el-btn-danger">🗑️ 删除</button>
+                     <button onclick="cancelEdit()" class="el-btn el-btn-default">取消</button>
+                  </div>
+               </div>
+               
+               <!-- 账号列表数据表格 -->
+               <div id="account_list_container" class="overflow-x-auto rounded-lg border min-h-[360px]" style="border-color:var(--border-color)">
+                   <table class="el-table">
+                       <thead>
+                           <tr>
+                              <th>备注 (别名)</th>
+                              <th>预设域名</th>
+                              <th>已部署 Worker</th>
+                              <th>今日请求量</th>
+                              <th>限额占比</th>
+                              <th class="text-right">操作</th>
+                           </tr>
+                       </thead>
+                       <tbody id="account_body"></tbody>
+                   </table>
+               </div>
             </div>
         </div>
-  
+   
+        <!-- 右栏：项目配置与下发中心 (占 5 份，采用 Tab 切换极简舒展架构) -->
         <div id="section_projects" class="lg:col-span-5 space-y-4">
-            <div class="bg-white rounded shadow border-t-4 border-red-500 project-card">
-                <div class="bg-red-50 px-4 py-2 flex justify-between items-center border-b border-red-100">
-                    <div class="flex items-center gap-2"><span class="text-sm font-bold text-red-700">🔴 CMliu 配置</span><span id="badge_cmliu" class="text-[9px] px-1.5 py-0.5 rounded text-white bg-gray-400">Loading</span></div>
-                    <button onclick="openVersionHistory('cmliu')" class="text-[10px] bg-white border border-red-200 text-red-600 px-2 py-0.5 rounded hover:bg-red-50">📜 历史/收藏</button>
-                </div>
-                <div class="p-3">
-                    <div id="ver_cmliu" class="text-[10px] font-mono text-gray-500 mb-2 border-b border-gray-100 pb-2 space-y-1">Checking...</div>
-                    <details class="group bg-slate-50 rounded border mb-2">
-                        <summary class="bg-slate-100 px-2 py-1 text-xs font-bold text-gray-600 flex justify-between"><span>📝 变量列表</span><span>▼</span></summary>
-                        <div id="vars_cmliu" class="p-2 space-y-1 max-h-[200px] overflow-y-auto"></div>
-                    </details>
-                    <div class="flex gap-2 mb-2">
-                        <button onclick="addVarRow('cmliu')" class="flex-1 bg-dashed border text-gray-400 text-xs py-1 rounded hover:text-gray-600">➕ 变量</button>
-                        <button onclick="selectSyncAccount('cmliu')" class="flex-none bg-orange-50 text-orange-600 border border-orange-200 text-xs px-2 py-1 rounded">🔄 同步</button>
+            <div class="el-card p-5">
+                
+                <!-- Tab 标签页切换栏 -->
+                <div class="el-tab-nav mb-4">
+                    <div class="el-tab-item active flex items-center gap-1.5" id="tab_btn_cmliu" onclick="switchProjectTab('cmliu')">
+                        <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> CMLiu (EdgeTunnel)
                     </div>
-                    <div class="flex gap-2">
-                        <button onclick="refreshUUID('cmliu')" class="flex-1 bg-gray-100 text-gray-600 text-xs py-1.5 rounded">🎲 刷 UUID</button>
-                        <button onclick="deploy('cmliu')" id="btn_deploy_cmliu" class="flex-[2] bg-red-600 text-white text-xs py-1.5 rounded font-bold hover:bg-red-700">🚀 部署更新</button>
+                    <div class="el-tab-item flex items-center gap-1.5" id="tab_btn_joey" onclick="switchProjectTab('joey')">
+                        <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Joey (CFnew)
                     </div>
-                    <button onclick="fix1101('cmliu')" id="btn_fix1101_cmliu" class="w-full mt-2 bg-orange-500 text-white text-xs py-1.5 rounded font-bold hover:bg-orange-600">🔧 一键修复 1101</button>
+                    <div class="el-tab-item flex items-center gap-1.5" id="tab_btn_ech" onclick="switchProjectTab('ech')">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> ECH-WK
+                    </div>
                 </div>
-            </div>
 
-            <div class="bg-white rounded shadow border-t-4 border-blue-500 project-card">
-                <div class="bg-blue-50 px-4 py-2 flex justify-between items-center border-b border-blue-100">
-                    <div class="flex items-center gap-2"><span class="text-sm font-bold text-blue-700">🔵 Joey 配置</span><span id="badge_joey" class="text-[9px] px-1.5 py-0.5 rounded text-white bg-gray-400">Loading</span></div>
-                    <button onclick="openVersionHistory('joey')" class="text-[10px] bg-white border border-blue-200 text-blue-600 px-2 py-0.5 rounded hover:bg-blue-50">📜 历史/收藏</button>
-                </div>
-                <div class="p-3">
-                    <div id="ver_joey" class="text-[10px] font-mono text-gray-500 mb-2 border-b border-gray-100 pb-2 space-y-1">Checking...</div>
-                    <details class="group bg-slate-50 rounded border mb-2">
-                        <summary class="bg-slate-100 px-2 py-1 text-xs font-bold text-gray-600 flex justify-between"><span>📝 变量列表</span><span>▼</span></summary>
-                        <div id="vars_joey" class="p-2 space-y-1 max-h-[200px] overflow-y-auto"></div>
-                    </details>
-                    <div class="flex gap-2 mb-2">
-                        <button onclick="addVarRow('joey')" class="flex-1 bg-dashed border text-gray-400 text-xs py-1 rounded hover:text-gray-600">➕ 变量</button>
-                        <button onclick="selectSyncAccount('joey')" class="flex-none bg-orange-50 text-orange-600 border border-orange-200 text-xs px-2 py-1 rounded">🔄 同步</button>
-                    </div>
-                    <div class="flex gap-2">
-                        <button onclick="refreshUUID('joey')" class="flex-1 bg-gray-100 text-gray-600 text-xs py-1.5 rounded">🎲 刷 UUID</button>
-                        <button onclick="deploy('joey')" id="btn_deploy_joey" class="flex-[2] bg-blue-600 text-white text-xs py-1.5 rounded font-bold hover:bg-blue-700">🚀 部署更新</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="bg-white rounded shadow border-t-4 border-green-500 project-card">
-                <div class="bg-green-50 px-4 py-2 flex justify-between items-center border-b border-green-100"><span class="text-sm font-bold text-green-700">🟢 ECH 配置</span><span class="text-[9px] px-1.5 py-0.5 rounded text-white bg-green-500">Stable</span></div>
-                <div class="p-3">
-                    <div class="mb-2 p-2 bg-slate-50 border rounded text-xs"><div id="ech_proxy_selector_container" class="mb-2"></div><div id="vars_ech" class="space-y-1"></div></div>
-                    <div class="mb-2 p-2 bg-slate-50 border border-dashed border-green-300 rounded text-xs">
-                        <div class="flex items-center gap-2 mb-1">
-                            <div class="relative inline-block w-8 align-middle select-none">
-                                <input type="checkbox" id="ech_token_enabled" class="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 appearance-none cursor-pointer border-gray-300" onchange="toggleEchToken()"/>
-                                <label for="ech_token_enabled" class="toggle-label block overflow-hidden h-4 rounded-full bg-gray-300 cursor-pointer"></label>
+                <!-- Tab 1: CMLiu 项目配置面板 -->
+                <div id="tab_panel_cmliu" class="space-y-4 animate-fade-in">
+                    <div class="p-3 rounded-lg border space-y-2.5" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-sm text-rose-600">🔴 CMLiu 架构配置</span>
+                                <a href="https://github.com/cmliu/edgetunnel" target="_blank" class="el-tag el-tag-blue">🔗 开源仓库</a>
+                                <span id="badge_cmliu" class="el-tag el-tag-gray">Loading</span>
                             </div>
-                            <span class="font-bold text-green-700">🔑 Token 鉴权</span>
-                            <span id="ech_token_status" class="text-gray-400 text-[10px]">(关闭 - 不填入)</span>
+                            <button onclick="openVersionHistory('cmliu')" class="el-btn el-btn-default el-btn-xs">📜 历史版本/锁定</button>
                         </div>
-                        <input id="ech_token_input" type="text" placeholder="填写 Token 后开启开关才会生效" class="input-field w-full opacity-50 cursor-not-allowed" disabled/>
-                        <div class="flex items-center gap-2 mt-2 pt-2 border-t border-green-200">
-                            <input type="checkbox" id="ech_disable_workers_dev" class="w-4 h-4 text-red-600 border-gray-300 rounded cursor-pointer">
-                            <label for="ech_disable_workers_dev" class="font-bold text-gray-700 cursor-pointer">🚫 禁用默认 *.workers.dev 域名</label>
+                        <div id="ver_cmliu" class="text-xs font-mono p-2 rounded bg-white dark:bg-slate-900 border border-dashed" style="border-color:var(--border-color)">Checking...</div>
+                        <div class="text-xs p-2 rounded flex items-center justify-between" style="background-color:var(--el-color-primary-light); color:var(--el-color-primary)">
+                            <span>💡 管理后台访问路径: <b class="font-mono">/admin</b></span>
+                            <span class="text-[11px] opacity-75">核心兼容日期: 2024-04-05</span>
                         </div>
                     </div>
-                    <div class="flex gap-2">
-                        <button onclick="deploy('ech')" id="btn_deploy_ech" class="w-full bg-green-600 text-white text-xs py-1.5 rounded font-bold hover:bg-green-700">🚀 部署配置</button>
+
+                    <!-- 变量列表 -->
+                    <div class="space-y-2">
+                        <div class="flex justify-between items-center">
+                            <label class="text-xs font-bold" style="color:var(--text-primary)">📝 环境变量配置 (VARS_cmliu):</label>
+                            <div class="flex gap-1.5">
+                                <button onclick="addVarRow('cmliu')" class="el-btn el-btn-default el-btn-xs">➕ 添加变量</button>
+                                <button onclick="selectSyncAccount('cmliu')" class="el-btn el-btn-warning el-btn-xs">🔄 同步线上变量</button>
+                            </div>
+                        </div>
+                        <div id="vars_cmliu" class="space-y-1.5 p-3 rounded-lg border max-h-[260px] overflow-y-auto" style="background-color:var(--bg-subtle); border-color:var(--border-color)"></div>
+                    </div>
+
+                    <!-- 操作按钮组 -->
+                    <div class="grid grid-cols-3 gap-2 pt-2 border-t" style="border-color:var(--border-light)">
+                        <button onclick="refreshUUID('cmliu')" class="el-btn el-btn-default">🎲 随机 UUID</button>
+                        <button onclick="deploy('cmliu')" id="btn_deploy_cmliu" class="el-btn el-btn-danger font-bold col-span-2">🚀 部署全账号 CMLiu</button>
+                    </div>
+                    <button onclick="fix1101('cmliu')" id="btn_fix1101_cmliu" class="w-full el-btn el-btn-warning font-bold">🔧 一键智能修复 1101 错误</button>
+                </div>
+
+                <!-- Tab 2: Joey 项目配置面板 -->
+                <div id="tab_panel_joey" class="hidden space-y-4 animate-fade-in">
+                    <div class="p-3 rounded-lg border space-y-2.5" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-sm text-blue-600">🔵 Joey (CFnew) 架构配置</span>
+                                <a href="https://github.com/byJoey/cfnew" target="_blank" class="el-tag el-tag-blue">🔗 开源仓库</a>
+                                <span id="badge_joey" class="el-tag el-tag-gray">Loading</span>
+                            </div>
+                            <button onclick="openVersionHistory('joey')" class="el-btn el-btn-default el-btn-xs">📜 历史版本/锁定</button>
+                        </div>
+                        <div id="ver_joey" class="text-xs font-mono p-2 rounded bg-white dark:bg-slate-900 border border-dashed" style="border-color:var(--border-color)">Checking...</div>
+                        <div class="text-xs p-2 rounded flex items-center justify-between" style="background-color:var(--el-color-primary-light); color:var(--el-color-primary)">
+                            <span>💡 订阅获取路径: <b class="font-mono">/{UUID}</b></span>
+                            <span class="text-[11px] opacity-75">核心兼容日期: 2024-02-20</span>
+                        </div>
+                    </div>
+
+                    <!-- 变量列表 -->
+                    <div class="space-y-2">
+                        <div class="flex justify-between items-center">
+                            <label class="text-xs font-bold" style="color:var(--text-primary)">📝 环境变量配置 (VARS_joey):</label>
+                            <div class="flex gap-1.5">
+                                <button onclick="addVarRow('joey')" class="el-btn el-btn-default el-btn-xs">➕ 添加变量</button>
+                                <button onclick="selectSyncAccount('joey')" class="el-btn el-btn-warning el-btn-xs">🔄 同步线上变量</button>
+                            </div>
+                        </div>
+                        <div id="vars_joey" class="space-y-1.5 p-3 rounded-lg border max-h-[260px] overflow-y-auto" style="background-color:var(--bg-subtle); border-color:var(--border-color)"></div>
+                    </div>
+
+                    <!-- 操作按钮组 -->
+                    <div class="grid grid-cols-3 gap-2 pt-2 border-t" style="border-color:var(--border-light)">
+                        <button onclick="refreshUUID('joey')" class="el-btn el-btn-default">🎲 随机 UUID</button>
+                        <button onclick="deploy('joey')" id="btn_deploy_joey" class="el-btn el-btn-primary font-bold col-span-2">🚀 部署全账号 Joey</button>
                     </div>
                 </div>
+
+                <!-- Tab 3: ECH 项目配置面板 -->
+                <div id="tab_panel_ech" class="hidden space-y-4 animate-fade-in">
+                    <div class="p-3 rounded-lg border space-y-2.5" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-sm text-emerald-600">🟢 ECH 专属配置</span>
+                                <a href="https://github.com/hc990275/ech-wk" target="_blank" class="el-tag el-tag-blue">🔗 开源仓库</a>
+                                <span class="el-tag el-tag-green">Stable</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ProxyIP 选择与变量列表 -->
+                    <div class="space-y-2">
+                        <label class="text-xs font-bold" style="color:var(--text-primary)">🌐 预设 ProxyIP 节点池快捷注入:</label>
+                        <div id="ech_proxy_selector_container"></div>
+                        <div id="vars_ech" class="space-y-1.5 p-3 rounded-lg border max-h-[200px] overflow-y-auto" style="background-color:var(--bg-subtle); border-color:var(--border-color)"></div>
+                    </div>
+
+                    <!-- Token 鉴权开关 -->
+                    <div class="p-3 rounded-lg border space-y-2" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <input type="checkbox" id="ech_token_enabled" class="w-4 h-4 text-emerald-600 rounded cursor-pointer accent-emerald-600" onchange="toggleEchToken()"/>
+                                <label for="ech_token_enabled" class="font-bold text-xs" style="color:var(--text-primary)">🔑 开启 Token 访问鉴权</label>
+                            </div>
+                            <span id="ech_token_status" class="text-xs text-slate-400">(关闭 - 不填入)</span>
+                        </div>
+                        <input id="ech_token_input" type="text" placeholder="请填写 Token 凭据（开启后生效）" class="el-input opacity-50 cursor-not-allowed" disabled/>
+                        
+                        <div class="flex items-center gap-2 pt-2 border-t" style="border-color:var(--border-light)">
+                            <input type="checkbox" id="ech_disable_workers_dev" class="w-4 h-4 text-rose-600 rounded cursor-pointer accent-rose-600">
+                            <label for="ech_disable_workers_dev" class="font-semibold text-xs text-rose-600 cursor-pointer">🚫 部署后自动禁用默认 *.workers.dev 域名</label>
+                        </div>
+                    </div>
+
+                    <button onclick="deploy('ech')" id="btn_deploy_ech" class="w-full el-btn el-btn-success font-bold">🚀 部署全账号 ECH Worker</button>
+                </div>
+
             </div>
         </div>
       </div>
     </div>
 
-    <div id="batch_deploy_modal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
-        <div class="bg-white rounded-lg w-[600px] shadow-2xl overflow-hidden animate-fade-in">
-            <div class="bg-indigo-600 p-3 flex justify-between items-center text-white">
-                <h3 class="font-bold text-sm">✨ 批量部署</h3>
-                <button onclick="document.getElementById('batch_deploy_modal').classList.add('hidden')" class="hover:text-gray-200">×</button>
+    <!-- 弹窗部分：批量部署 Modal -->
+    <div id="batch_deploy_modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div class="el-card w-full max-w-[620px] overflow-hidden animate-fade-in shadow-2xl">
+            <div class="p-4 flex justify-between items-center text-white bg-blue-600">
+                <h3 class="font-bold text-sm flex items-center gap-2"><span>✨</span> 批量部署 Worker 实例</h3>
+                <button onclick="document.getElementById('batch_deploy_modal').classList.add('hidden')" class="text-white/80 hover:text-white text-xl font-bold">×</button>
             </div>
-            <div class="p-4 text-xs space-y-3">
+            <div class="p-5 text-xs space-y-4">
                 <div class="grid grid-cols-2 gap-3">
-                    <div><label class="block text-gray-500 mb-1">Worker 名称</label><input id="bd_name" class="input-field font-bold text-indigo-700" placeholder="例如: new-proxy-01"></div>
-                    <div><label class="block text-gray-500 mb-1">选择模板</label><select id="bd_template" onchange="toggleBatchInputs()" class="input-field bg-gray-50"><option value="cmliu">🔴 CMliu (EdgeTunnel)</option><option value="joey">🔵 Joey (相信光)</option></select></div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1" style="color:var(--text-regular)">Worker 实例名称</label>
+                        <input id="bd_name" class="el-input font-bold text-blue-600" placeholder="例如: cf-proxy-01">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1" style="color:var(--text-regular)">选择预设框架模板</label>
+                        <select id="bd_template" onchange="toggleBatchInputs()" class="el-input">
+                            <option value="cmliu">🔴 CMLiu (EdgeTunnel)</option>
+                            <option value="joey">🔵 Joey (CFnew 相信光)</option>
+                        </select>
+                    </div>
                 </div>
                 
                 <div class="grid grid-cols-2 gap-3 items-end">
-                    <div><label class="block text-gray-500 mb-1">KV 空间名称</label><input id="bd_kv_name" class="input-field" placeholder="自动创建/使用同名 KV"></div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1" style="color:var(--text-regular)">KV 命名空间名称</label>
+                        <input id="bd_kv_name" class="el-input" placeholder="默认与 Worker 同名">
+                    </div>
                     <div class="flex flex-col gap-2 pb-1">
-                         <div class="flex items-center gap-2">
-                            <input type="checkbox" id="bd_enable_kv" class="w-4 h-4 text-indigo-600 border-gray-300 rounded" checked>
-                            <label for="bd_enable_kv" class="font-bold text-gray-700">绑定 KV 存储</label>
-                         </div>
-                         <div class="flex items-center gap-2">
-                            <input type="checkbox" id="bd_use_saved_vars" class="w-4 h-4 text-green-600 border-gray-300 rounded" checked>
-                            <label for="bd_use_saved_vars" class="font-bold text-green-700">📦 采用已保存变量 (VARS)</label>
-                         </div>
+                         <label class="flex items-center gap-2 cursor-pointer font-semibold" style="color:var(--text-primary)">
+                            <input type="checkbox" id="bd_enable_kv" class="w-4 h-4 text-blue-600 rounded accent-blue-600" checked>
+                            绑定独立 KV 存储空间
+                         </label>
+                         <label class="flex items-center gap-2 cursor-pointer font-semibold text-emerald-600">
+                            <input type="checkbox" id="bd_use_saved_vars" class="w-4 h-4 text-emerald-600 rounded accent-emerald-600" checked>
+                            📦 注入已保存变量 (VARS)
+                         </label>
                     </div>
                 </div>
 
-                <div class="bg-slate-50 p-2 rounded border">
-                    <div class="flex items-center gap-2 mb-2">
-                         <input type="checkbox" id="bd_disable_workers_dev" class="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
-                         <label for="bd_disable_workers_dev" class="font-bold text-gray-700">🚫 禁用默认 *.workers.dev 域名</label>
+                <div class="p-3 rounded-lg border space-y-2" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                    <div class="flex items-center gap-2">
+                         <input type="checkbox" id="bd_disable_workers_dev" class="w-4 h-4 text-rose-600 rounded accent-rose-600">
+                         <label for="bd_disable_workers_dev" class="font-semibold text-rose-600 cursor-pointer">🚫 禁用默认 *.workers.dev 域名</label>
                     </div>
-                    <div class="border-t pt-2">
-                        <label class="block text-purple-700 font-bold mb-1">🌐 自定义域名 (自动绑定)</label>
+                    <div class="border-t pt-2" style="border-color:var(--border-light)">
+                        <label class="block text-xs font-semibold mb-1" style="color:var(--text-primary)">🌐 自动绑定自定义二级域名 (仅输入前缀):</label>
                         <div class="flex gap-1 items-center">
-                            <input id="bd_domain_prefix" class="input-field w-1/3" placeholder="仅输入前缀">
-                            <span class="text-gray-400">.</span>
-                            <span class="text-gray-500 text-xs italic">[使用账号预设域名]</span>
+                            <input id="bd_domain_prefix" class="el-input w-1/2 font-mono" placeholder="如 proxy-01">
+                            <span class="text-slate-400 font-bold">.</span>
+                            <span class="text-xs text-slate-500 italic">[自动拼接账号预设域名]</span>
                         </div>
                     </div>
                 </div>
 
-                <div id="bd_config_cmliu" class="bg-red-50 p-2 rounded border border-red-100">
-                    <label class="block text-red-700 font-bold mb-1">设置 ADMIN 密码</label>
-                    <input id="bd_admin_pass" class="input-field bg-white" placeholder="登录后台的密码">
+                <div id="bd_config_cmliu" class="p-3 rounded-lg border space-y-1.5" style="background-color:var(--el-color-danger-light); border-color:#fde2e2">
+                    <div class="flex justify-between items-center">
+                        <label class="font-bold text-xs text-rose-700">设置 ADMIN 后台登录密码</label>
+                        <span class="text-[11px] text-rose-500">访问路径: <b>/admin</b></span>
+                    </div>
+                    <input id="bd_admin_pass" class="el-input bg-white" placeholder="请输入后台管理密码">
                 </div>
-                <div id="bd_config_joey" class="hidden bg-blue-50 p-2 rounded border border-blue-100">
-                    <label class="block text-blue-700 font-bold mb-1">设置用户 UUID (u)</label>
+
+                <div id="bd_config_joey" class="hidden p-3 rounded-lg border space-y-1.5" style="background-color:var(--el-color-primary-light); border-color:#d9ecff">
+                    <div class="flex justify-between items-center">
+                        <label class="font-bold text-xs text-blue-700">设置用户 UUID (u)</label>
+                        <span class="text-[11px] text-blue-500">订阅路径: <b>/{UUID}</b></span>
+                    </div>
                     <div class="flex gap-2">
-                        <input id="bd_uuid" class="input-field bg-white font-mono" placeholder="UUID">
-                        <button onclick="document.getElementById('bd_uuid').value = crypto.randomUUID()" class="bg-blue-600 text-white px-2 rounded">🎲</button>
+                        <input id="bd_uuid" class="el-input bg-white font-mono" placeholder="UUID">
+                        <button onclick="document.getElementById('bd_uuid').value = crypto.randomUUID()" class="el-btn el-btn-primary el-btn-sm">🎲</button>
                     </div>
                 </div>
+
                 <div>
-                    <label class="block text-gray-500 mb-1">选择目标账号</label>
-                    <div id="bd_account_list" class="max-h-[100px] overflow-y-auto border rounded p-2 bg-gray-50 grid grid-cols-2 gap-2"></div>
+                    <label class="block text-xs font-semibold mb-1" style="color:var(--text-regular)">选择目标下发账号:</label>
+                    <div id="bd_account_list" class="max-h-[120px] overflow-y-auto border rounded p-2.5 grid grid-cols-2 gap-2" style="background-color:var(--bg-subtle); border-color:var(--border-color)"></div>
                 </div>
-                <div class="pt-2 border-t flex justify-end gap-2">
-                    <button onclick="document.getElementById('batch_deploy_modal').classList.add('hidden')" class="px-3 py-1.5 bg-gray-100 text-gray-600 rounded">取消</button>
-                    <button onclick="doBatchDeploy()" id="btn_do_batch" class="px-3 py-1.5 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700">🚀 开始部署</button>
+
+                <div class="pt-3 border-t flex justify-end gap-2" style="border-color:var(--border-light)">
+                    <button onclick="document.getElementById('batch_deploy_modal').classList.add('hidden')" class="el-btn el-btn-default">取消</button>
+                    <button onclick="doBatchDeploy()" id="btn_do_batch" class="el-btn el-btn-primary font-bold">🚀 开始下发部署</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <div id="yxip_modal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex justify-center items-start pt-[5vh] z-[60] overflow-y-auto">
-        <div class="bg-white rounded-lg shadow-2xl flex flex-col w-[90%] max-w-[800px] my-[5vh]">
-            <div class="bg-gradient-to-r from-yellow-500 to-yellow-600 p-4 rounded-t-lg flex justify-between items-center text-white shadow-sm">
-                <h3 class="font-bold text-lg flex items-center gap-2">⚡ 反代落地部署 (YXIP)</h3>
-                <button onclick="document.getElementById('yxip_modal').classList.add('hidden')" class="hover:bg-white/20 px-2 py-0.5 rounded transition-colors text-xl">×</button>
+    <!-- 弹窗部分：反代落地部署 (YXIP) Modal -->
+    <div id="yxip_modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-start pt-[5vh] z-[60] overflow-y-auto p-4">
+        <div class="el-card w-full max-w-[800px] my-[3vh] overflow-hidden animate-fade-in shadow-2xl">
+            <div class="p-4 flex justify-between items-center text-white bg-amber-500">
+                <h3 class="font-bold text-sm flex items-center gap-2"><span>⚡</span> 全球反代落地节点优选调度 (YXIP)</h3>
+                <button onclick="document.getElementById('yxip_modal').classList.add('hidden')" class="text-white/80 hover:text-white text-xl font-bold">×</button>
             </div>
             
-            <div class="p-5 overflow-y-auto">
-                <!-- Step 1: 目标配置 -->
-                <div class="mb-6">
-                    <h4 class="font-bold text-gray-700 border-b pb-2 mb-3 border-yellow-200">1. 操作目标配置</h4>
-                    <div class="bg-yellow-50 p-4 border border-yellow-100 rounded-lg">
-                        <label class="block text-sm font-bold text-gray-700 mb-2">更新策略类型：</label>
-                        <select id="yxip_type" class="input-field w-full mb-4 bg-white" onchange="toggleYxipAccountSelect()">
-                            <option value="joey">🚀 Joey 专属 (KV 模式): 写入目标账号项目绑定的核心配置库 (键 c)</option>
-                            <option value="joey_var">🪐 Joey 兼容 (变量模式): 写入中控面板供当前所有 Joey 项目统一使用的全局变量组 [yx]</option>
-                            <option value="cmliu">🌐 CMLiu 专属 (KV 模式): 写入目标账号项目绑定的自带节点列表库 (ADD.txt)</option>
+            <div class="p-5 text-xs space-y-4">
+                <div class="space-y-2">
+                    <label class="font-bold text-xs" style="color:var(--text-primary)">1. 操作目标配置与下发策略：</label>
+                    <div class="p-3.5 border rounded-lg space-y-3" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                        <select id="yxip_type" class="el-input bg-white dark:bg-slate-900" onchange="toggleYxipAccountSelect()">
+                            <option value="joey">🚀 Joey 专属 (KV 模式): 直写项目绑定的核心配置库 (键 c)</option>
+                            <option value="joey_var">🪐 Joey 兼容 (变量模式): 写入中控面板全局统一变量组 [yx]</option>
+                            <option value="cmliu">🌐 CMLiu 专属 (KV 模式): 直写项目绑定的自带节点库 (ADD.txt)</option>
                         </select>
 
-                        <div id="yxip_cmliu_account_area" class="mt-3">
-                            <label class="block text-sm font-bold text-slate-700 mb-2">选择目标 CF 账号 (对应其绑定的项目):</label>
-                            <div id="yxip_account_list" class="max-h-[150px] overflow-y-auto border rounded p-3 bg-white grid grid-cols-1 md:grid-cols-2 gap-2 shadow-inner">
-                                <!-- JS dynamically populates accounts -->
-                            </div>
+                        <div id="yxip_cmliu_account_area">
+                            <label class="block text-[11px] font-semibold mb-1.5" style="color:var(--text-regular)">选择目标 Cloudflare 账号:</label>
+                            <div id="yxip_account_list" class="max-h-[140px] overflow-y-auto border rounded p-2.5 grid grid-cols-1 md:grid-cols-2 gap-2" style="background-color:var(--bg-card); border-color:var(--border-color)"></div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Step 2: 选区配置 -->
-                <div>
-                    <h4 class="font-bold text-gray-700 border-b pb-2 mb-3 border-yellow-200 flex justify-between">
-                        <span>2. 节点筛选池要求</span>
-                        <div class="flex items-center gap-2 text-sm font-normal">
-                            <label>单地区上限:</label>
-                            <input type="number" id="yxip_limit" value="10" min="1" max="100" class="input-field bg-white py-1 w-[80px] text-center">
-                            <span>个</span>
+                <div class="space-y-2">
+                    <div class="flex justify-between items-center">
+                        <label class="font-bold text-xs" style="color:var(--text-primary)">2. 全球区域节点筛选池：</label>
+                        <div class="flex items-center gap-2">
+                            <span class="text-slate-400">单地区上限:</span>
+                            <input type="number" id="yxip_limit" value="10" min="1" max="100" class="el-input py-0.5 px-2 w-16 text-center text-xs">
+                            <span class="text-slate-400">个</span>
                         </div>
-                    </h4>
-                    
-                    <div class="flex gap-2 mb-3">
-                        <button onclick="yxipSelectAll()" class="px-3 py-1 bg-gray-100 border text-gray-700 shadow-sm hover:bg-gray-200 rounded text-sm transition-colors">全选</button>
-                        <button onclick="yxipSelectNone()" class="px-3 py-1 bg-gray-100 border text-gray-700 shadow-sm hover:bg-gray-200 rounded text-sm transition-colors">反选</button>
                     </div>
                     
-                    <div id="yxip_regions" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 text-sm max-h-[250px] overflow-y-auto p-2 border rounded bg-gray-50 shadow-inner">
-                        <div class="col-span-full text-center py-4 text-gray-400">正在获取全球节点数据...</div>
+                    <div class="flex gap-2">
+                        <button onclick="yxipSelectAll()" class="el-btn el-btn-default el-btn-xs">全选区域</button>
+                        <button onclick="yxipSelectNone()" class="el-btn el-btn-default el-btn-xs">清除选择</button>
+                    </div>
+                    
+                    <div id="yxip_regions" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-[220px] overflow-y-auto p-2.5 border rounded-lg" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                        <div class="col-span-full text-center py-4 text-slate-400">正在拉取全球节点池...</div>
                     </div>
                 </div>
 
-                <div class="mt-6 flex justify-end gap-3 pt-4 border-t border-gray-100">
-                    <button onclick="document.getElementById('yxip_modal').classList.add('hidden')" class="px-4 py-2 bg-gray-100 text-gray-600 rounded font-bold hover:bg-gray-200 transition-colors">取消</button>
-                    <button onclick="doYxipDeploy()" class="px-6 py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 text-white rounded font-bold hover:from-yellow-600 hover:to-yellow-700 shadow-md transition-all flex items-center gap-2">
-                        <span id="yxip_btn_icon">⚡</span> 开始提取与部署
+                <div class="flex justify-end gap-2 pt-3 border-t" style="border-color:var(--border-light)">
+                    <button onclick="document.getElementById('yxip_modal').classList.add('hidden')" class="el-btn el-btn-default">取消</button>
+                    <button onclick="doYxipDeploy()" class="el-btn el-btn-warning font-bold flex items-center gap-1">
+                        <span id="yxip_btn_icon">⚡</span> 开始提取并全量下发
                     </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <div id="account_manage_modal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
-        <div class="bg-white rounded-lg w-[650px] shadow-2xl max-h-[85vh] flex flex-col">
-            <div class="bg-slate-700 p-3 flex justify-between items-center text-white">
-                <h3 class="font-bold text-sm" id="manage_modal_title">📂 账号管理</h3>
-                <button onclick="document.getElementById('account_manage_modal').classList.add('hidden')" class="hover:text-gray-200">×</button>
+    <!-- 弹窗部分：账号 Worker 资源管理 Modal -->
+    <div id="account_manage_modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div class="el-card w-full max-w-[680px] max-h-[85vh] flex flex-col overflow-hidden animate-fade-in shadow-2xl">
+            <div class="p-4 flex justify-between items-center text-white bg-slate-800">
+                <h3 class="font-bold text-sm" id="manage_modal_title">📂 账号资源管理</h3>
+                <button onclick="document.getElementById('account_manage_modal').classList.add('hidden')" class="text-white/80 hover:text-white text-xl font-bold">×</button>
             </div>
-            <div class="p-2 border-b bg-gray-50 text-[10px] text-gray-500 space-y-1">
-                <div>⚠️ 警告：删除逻辑为 [解绑 Worker -> 删除 Worker -> 删除 KV]。</div>
-                <div class="flex items-center gap-2 bg-indigo-50 p-1.5 rounded border border-indigo-100">
-                    <span class="text-indigo-700 font-bold flex-none">🌐 子域名:</span>
-                    <span id="manage_subdomain_display" class="font-mono text-indigo-600 text-[11px]">加载中...</span>
-                    <span class="text-gray-400">.workers.dev</span>
-                    <button onclick="promptChangeSubdomain()" class="ml-auto flex-none bg-indigo-600 text-white px-2 py-0.5 rounded hover:bg-indigo-700 font-bold">✏️ 修改</button>
+            <div class="p-3 border-b text-xs space-y-2" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                <div class="flex items-center justify-between p-2 rounded border" style="background-color:var(--el-color-primary-light); border-color:#d9ecff">
+                    <div class="flex items-center gap-2">
+                        <span class="font-bold text-blue-700">🌐 workers.dev 子域名:</span>
+                        <span id="manage_subdomain_display" class="font-mono font-bold text-blue-600">加载中...</span>
+                        <span class="text-slate-400">.workers.dev</span>
+                    </div>
+                    <button onclick="promptChangeSubdomain()" class="el-btn el-btn-primary el-btn-xs font-bold">✏️ 修改子域名</button>
                 </div>
             </div>
             <div class="flex-1 overflow-y-auto p-4">
-                <div id="manage_loading" class="text-center py-4 text-gray-400">正在加载 Workers 列表...</div>
-                <table class="w-full compact-table hidden" id="manage_table">
-                    <thead><tr><th>Worker 名称</th><th>创建时间</th><th>修改时间</th><th class="text-right">操作</th></tr></thead>
+                <div id="manage_loading" class="text-center py-6 text-slate-400 text-xs">正在拉取 Worker 列表...</div>
+                <table class="el-table hidden" id="manage_table">
+                    <thead>
+                        <tr><th>Worker 实例</th><th>创建时间</th><th>更新时间</th><th class="text-right">操作</th></tr>
+                    </thead>
                     <tbody id="manage_list_body"></tbody>
                 </table>
             </div>
         </div>
     </div>
 
-    <div id="history_modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
-        <div class="bg-white rounded-lg w-[450px] shadow-xl max-h-[85vh] flex flex-col overflow-hidden">
-            <div class="p-3 border-b bg-gray-50 flex justify-between items-center">
-                <h3 class="text-sm font-bold text-gray-700">📜 版本管理</h3>
-                <div class="flex gap-2">
-                    <button onclick="openFavoritesPanel()" class="text-xs bg-orange-100 text-orange-600 px-2 py-1 rounded font-bold border border-orange-200 hover:bg-orange-200">⭐ 查看收藏</button>
-                    <button onclick="document.getElementById('history_modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg">×</button>
+    <!-- 弹窗部分：版本历史 & 收藏 Modal -->
+    <div id="history_modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div class="el-card w-full max-w-[480px] max-h-[85vh] flex flex-col overflow-hidden animate-fade-in shadow-2xl">
+            <div class="p-3.5 border-b flex justify-between items-center" style="background-color:var(--bg-subtle); border-color:var(--border-color)">
+                <h3 class="text-sm font-bold flex items-center gap-2" style="color:var(--text-primary)">
+                  <span>📜</span> 上游版本历史与版本锁定
+                </h3>
+                <div class="flex items-center gap-2">
+                    <button onclick="openFavoritesPanel()" class="el-btn el-btn-warning el-btn-xs">⭐ 我的收藏</button>
+                    <button onclick="document.getElementById('history_modal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
                 </div>
             </div>
             
-            <div id="fav_panel_view" class="hidden flex-col h-full bg-orange-50">
-                <div class="p-2 border-b border-orange-200 flex justify-between items-center">
-                    <span class="text-xs font-bold text-orange-800">⭐ 我的收藏版本</span>
-                    <button onclick="closeFavoritesPanel()" class="text-[10px] bg-white border px-2 py-0.5 rounded">返回历史</button>
+            <div id="fav_panel_view" class="hidden flex-col h-full p-3 space-y-2 overflow-y-auto" style="background-color:var(--el-color-warning-light)">
+                <div class="flex justify-between items-center pb-2 border-b border-amber-200">
+                    <span class="text-xs font-bold text-amber-800">⭐ 收藏的版本</span>
+                    <button onclick="closeFavoritesPanel()" class="el-btn el-btn-default el-btn-xs">返回历史列表</button>
                 </div>
-                <div id="fav_full_list" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
+                <div id="fav_full_list" class="space-y-1.5"></div>
             </div>
 
             <div id="history_panel_view" class="flex flex-col h-full">
-                <div class="bg-gray-50 p-2 border-b flex justify-between items-center text-xs">
-                    <span>显示条数:</span>
-                    <input type="number" id="history_limit_input" value="10" class="w-12 text-center border rounded" onchange="refreshHistory()">
+                <div class="p-2.5 border-b flex justify-between items-center text-xs" style="border-color:var(--border-light)">
+                    <span style="color:var(--text-secondary)">显示最近提交数:</span>
+                    <input type="number" id="history_limit_input" value="10" class="el-input py-0.5 px-2 w-16 text-center text-xs" onchange="refreshHistory()">
                 </div>
-                <div class="flex-1 overflow-y-auto bg-slate-50 p-2 space-y-3">
-                    <div>
-                        <div class="flex justify-between items-end px-1 mb-1">
-                            <div class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">🕒 最近提交</div>
-                        </div>
-                        <div id="history_list" class="space-y-1 min-h-[100px]"></div>
-                    </div>
+                <div class="flex-1 overflow-y-auto p-3 space-y-2" style="background-color:var(--bg-subtle)">
+                    <div id="history_list" class="space-y-1.5"></div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div id="sync_select_modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
-        <div class="bg-white rounded-lg p-4 w-80 shadow-xl max-h-[80vh] flex flex-col">
-            <h3 class="text-sm font-bold mb-3 text-gray-700">📥 选择同步源</h3>
-            <div id="sync_list" class="space-y-1 overflow-y-auto flex-1 mb-3"></div>
-            <button onclick="document.getElementById('sync_select_modal').classList.add('hidden')" class="w-full bg-gray-200 text-gray-600 text-xs py-1.5 rounded">取消</button>
+    <!-- 弹窗部分：同步源选择 Modal -->
+    <div id="sync_select_modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div class="el-card w-full max-w-[360px] p-4 animate-fade-in shadow-2xl flex flex-col">
+            <h3 class="text-sm font-bold mb-3" style="color:var(--text-primary)">📥 选择同步变量的来源账号</h3>
+            <div id="sync_list" class="space-y-1.5 overflow-y-auto max-h-[300px] mb-3"></div>
+            <button onclick="document.getElementById('sync_select_modal').classList.add('hidden')" class="el-btn el-btn-default w-full">取消</button>
         </div>
     </div>
 
+    <!-- 可拖动悬浮工作台 -->
     <div id="workbench_modal" class="hidden fixed inset-0 z-50" style="pointer-events:none">
-        <div id="workbench_panel" class="bg-slate-900 rounded-xl shadow-2xl flex flex-col border border-slate-700" style="pointer-events:auto;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:700px;max-width:90vw;height:50vh;max-height:80vh;resize:both;overflow:hidden">
-            <div id="workbench_drag" class="flex justify-between items-center px-4 py-2 border-b border-slate-700 cursor-move select-none" style="cursor:move">
-                <h3 class="text-sm font-bold text-green-400 flex items-center gap-2">📋 工作台 <span id="wb_status" class="text-[10px] text-slate-500 font-normal"></span></h3>
-                <div class="flex gap-2">
-                    <button onclick="document.getElementById('workbench_log').innerHTML=''" class="text-[10px] text-slate-500 hover:text-slate-300 border border-slate-600 px-2 py-0.5 rounded">🗑️ 清空</button>
-                    <button onclick="closeWorkbench()" class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
+        <div id="workbench_panel" class="bg-slate-950 rounded-xl shadow-2xl flex flex-col border border-slate-700" style="pointer-events:auto;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:720px;max-width:92vw;height:55vh;max-height:85vh;resize:both;overflow:hidden">
+            <div id="workbench_drag" class="flex justify-between items-center px-4 py-2.5 border-b border-slate-800 cursor-move select-none bg-slate-900">
+                <h3 class="text-xs font-bold text-emerald-400 flex items-center gap-2">
+                   <span>💻</span> 执行控制台 / 实时工作台
+                </h3>
+                <div class="flex items-center gap-2">
+                    <button onclick="manualReportIssue()" class="text-[11px] text-amber-400 hover:text-amber-300 border border-amber-500/40 bg-amber-950/40 px-2 py-0.5 rounded font-bold">🐛 报障 / Issue</button>
+                    <button onclick="document.getElementById('workbench_log').innerHTML=''" class="text-[11px] text-slate-400 hover:text-slate-200 border border-slate-700 px-2 py-0.5 rounded">🗑️ 清空日志</button>
+                    <button onclick="closeWorkbench()" class="text-slate-400 hover:text-white text-lg font-bold leading-none">&times;</button>
                 </div>
             </div>
-            <div id="workbench_log" class="flex-1 overflow-y-auto p-3 text-xs font-mono text-green-400 space-y-0.5">
-                <div class="text-slate-600">// 等待操作...</div>
+            <div id="workbench_log" class="flex-1 overflow-y-auto p-3 text-xs font-mono text-emerald-400 space-y-1 bg-slate-950">
+                <div class="text-slate-600">// 等待执行任务...</div>
             </div>
         </div>
     </div>
@@ -1606,7 +2026,21 @@ function mainHtml() {
       let deletedVars = { cmliu: [], joey: [], ech: [] };
       let deployConfigs = {}; 
       let currentHistoryType = null;
+      const recentWbLogs = [];
   
+      
+      // ==========================================
+      // Element UI Tab 切换
+      // ==========================================
+      function switchProjectTab(tab) {
+          ['cmliu', 'joey', 'ech'].forEach(t => {
+              const btn = document.getElementById('tab_btn_' + t);
+              const panel = document.getElementById('tab_panel_' + t);
+              if (btn) btn.classList.toggle('active', t === tab);
+              if (panel) panel.classList.toggle('hidden', t !== tab);
+          });
+      }
+
       async function init() {
           renderProxySelector();
           await loadAccounts();
@@ -1616,6 +2050,86 @@ function mainHtml() {
           ['cmliu','joey'].forEach(t => { checkDeployConfig(t); checkUpdate(t); });
       }
 
+      // ====            // ==========================================
+      // Debug / 错误捕获与一键反馈模块
+      // ==========================================
+      function getFormattedDebugReport(title, detail, context = {}) {
+          const timeStr = new Date().toLocaleString();
+          const q3 = String.fromCharCode(96, 96, 96);
+          const contextStr = Object.keys(context).length > 0 ? ('\\n\\n### 操作上下文\\\n' + q3 + 'json\\\n' + JSON.stringify(context, null, 2) + '\\\n' + q3) : '';
+          const logsStr = recentWbLogs.length > 0 ? ('\\n\\n### 最近工作台日志\\\n' + q3 + '\\\n' + recentWbLogs.slice(-15).join('\\\n') + '\\\n' + q3) : '';
+          return '### 错误概述\\n**' + title + '**\\n\\n### 详细报错信息\\\n' + q3 + '\\\n' + detail + '\\\n' + q3 + contextStr + logsStr + '\\n\\n### 发生时间\\\n' + timeStr + '\\n\\n---\\n*来自 CFAuto (V10.11.0) 智能中控诊断模块*';
+      }
+
+function copyToClipboard(text, successMsg = '已复制到剪贴板') {
+          if (navigator.clipboard && window.isSecureContext) {
+              navigator.clipboard.writeText(text).then(() => {
+                  Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: successMsg, showConfirmButton: false, timer: 2000 });
+              }).catch(() => fallbackCopy(text, successMsg));
+          } else {
+              fallbackCopy(text, successMsg);
+          }
+      }
+
+      function fallbackCopy(text, successMsg) {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          try {
+              document.execCommand('copy');
+              Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: successMsg, showConfirmButton: false, timer: 2000 });
+          } catch(e) {
+              Swal.fire('复制失败', '请手动选择复制', 'error');
+          }
+          document.body.removeChild(ta);
+      }
+
+      function showDebugError(title, detail, context = {}) {
+          const report = getFormattedDebugReport(title, detail, context);
+          const issueTitle = encodeURIComponent('[Bug Report] ' + title + ': ' + (typeof detail === 'string' ? detail.slice(0, 45) : ''));
+          const issueBody = encodeURIComponent(report);
+          const issueUrl = 'https://github.com/hc990275/cfauto/issues/new?title=' + issueTitle + '&body=' + issueBody;
+
+          Swal.fire({
+              title: '❌ ' + title,
+              html: \`
+                  <div class="text-left text-xs space-y-2">
+                      <div class="bg-red-50 text-red-700 p-2.5 rounded border border-red-200 font-mono break-all max-h-36 overflow-y-auto">\${detail || '未知异常'}</div>
+                      <div class="flex gap-2 pt-2">
+                          <button id="btn_copy_debug_log" class="flex-1 bg-slate-800 hover:bg-slate-900 text-white font-bold py-1.5 px-2 rounded text-xs flex items-center justify-center gap-1">📋 复制错误日志</button>
+                          <button id="btn_open_github_issue" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-2 rounded text-xs flex items-center justify-center gap-1">🚀 一键提交 Issue</button>
+                      </div>
+                  </div>
+              \`,
+              icon: 'error',
+              showConfirmButton: true,
+              confirmButtonText: '关闭',
+              confirmButtonColor: '#64748b',
+              didOpen: () => {
+                  document.getElementById('btn_copy_debug_log').onclick = () => copyToClipboard(report, '📋 错误日志已复制，可随时粘贴！');
+                  document.getElementById('btn_open_github_issue').onclick = () => {
+                      window.open(issueUrl, '_blank');
+                      Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: '已打开 GitHub Issues 页面', showConfirmButton: false, timer: 2500 });
+                  };
+              }
+          });
+      }
+
+      function manualReportIssue() {
+          const logs = recentWbLogs.slice(-25).join('\\\n') || '（暂无近期日志）';
+          showDebugError('用户主动故障报障', '当前系统运行状态与近期工作台日志汇报', { logs: logs });
+      }
+
+      function toggleAuthFields() {
+          const isToken = document.querySelector('input[name="auth_mode"]:checked').value === 'token';
+          document.getElementById('field_auth_token').classList.toggle('hidden', !isToken);
+          document.getElementById('field_auth_key').classList.toggle('hidden', isToken);
+      }
+
       function openWorkbench() {
           document.getElementById('workbench_modal').classList.remove('hidden');
       }
@@ -1623,6 +2137,8 @@ function mainHtml() {
           document.getElementById('workbench_modal').classList.add('hidden');
       }
       function wbLog(msg, colorClass) {
+          recentWbLogs.push('[' + new Date().toLocaleTimeString() + '] ' + msg);
+          if (recentWbLogs.length > 200) recentWbLogs.shift();
           const log = document.getElementById('workbench_log');
           const div = document.createElement('div');
           if (colorClass) div.className = colorClass;
@@ -1657,18 +2173,26 @@ function mainHtml() {
       })();
 
       async function fetchZonesForAccount() {
-          const email = document.getElementById('in_email').value;
-          const key = document.getElementById('in_gkey').value;
-          const id = document.getElementById('in_id').value;
+          const isToken = document.querySelector('input[name="auth_mode"]:checked')?.value === 'token';
+          const apiToken = document.getElementById('in_api_token').value.trim();
+          const email = document.getElementById('in_email').value.trim();
+          const key = document.getElementById('in_gkey').value.trim();
+          const id = document.getElementById('in_id').value.trim();
           const select = document.getElementById('in_zone_select');
 
-          if (!email || !key) return Swal.fire('提示', '请先填写 Email, API Key', 'warning');
+          if (isToken && !apiToken) return Swal.fire('提示', '请先填写 API Token', 'warning');
+          if (!isToken && (!email || !key)) return Swal.fire('提示', '请先填写 Email 与 Global API Key', 'warning');
+          if (!id) return Swal.fire('提示', '请先填写 Account ID', 'warning');
 
           select.innerHTML = '<option>Loading...</option>';
           try {
+              const payload = { accountId: id };
+              if (isToken || apiToken) payload.apiToken = apiToken;
+              if (email && key) { payload.email = email; payload.globalKey = key; }
+
               const res = await fetch('/api/zones', {
                   method: 'POST',
-                  body: JSON.stringify({ accountId: id, email: email, globalKey: key })
+                  body: JSON.stringify(payload)
               });
               const d = await res.json();
               if (d.success) {
@@ -1676,9 +2200,12 @@ function mainHtml() {
                       d.zones.map(z => \`<option value="\${z.id}" data-name="\${z.name}">\${z.name}</option>\`).join('');
               } else {
                   select.innerHTML = '<option>读取失败</option>';
-                  Swal.fire('错误', d.msg, 'error');
+                  showDebugError('域名读取失败', d.msg || '无法拉取 Cloudflare 托管域名', { accountId: id });
               }
-          } catch(e) { select.innerHTML = '<option>网络错误</option>'; }
+          } catch(e) { 
+              select.innerHTML = '<option>网络错误</option>'; 
+              showDebugError('网络异常', e.message, { accountId: id });
+          }
       }
 
       function updateZoneInfo() {
@@ -1707,7 +2234,6 @@ function mainHtml() {
           wbLog('✨ 开始批量部署...', 'text-yellow-400');
           
           try {
-
              btn.innerText = "🚀 部署中...";
              const chks = document.querySelectorAll('.bd-acc-chk:checked');
              if(chks.length===0) throw new Error("至少选择一个账号");
@@ -1720,16 +2246,14 @@ function mainHtml() {
                   config.uuid = document.getElementById('bd_uuid').value;
              }
 
-             // 如果勾选了「采用已保存变量」，从 KV 读取并合并
               let savedVars = null;
               if (useSavedVars) {
                   wbLog('📦 读取已保存变量 (VARS_' + t + ')...', 'text-blue-300');
                   try {
-                      const vr = await fetch(\`/api/settings?type=\${t}\`);
+                      const vr = await fetch('/api/settings?type=' + t);
                       savedVars = await vr.json();
                       if (Array.isArray(savedVars) && savedVars.length > 0) {
-                          wbLog(\`✅ 读取到 \${savedVars.length} 个变量\`, 'text-green-300');
-                          // 将 config 中的值合并到 savedVars
+                          wbLog('✅ 读取到 ' + savedVars.length + ' 个变量', 'text-green-300');
                           Object.entries(config).forEach(([k, v]) => {
                               if (v) {
                                   const idx = savedVars.findIndex(sv => sv.key === k);
@@ -1756,18 +2280,27 @@ function mainHtml() {
                    })
                });
               const logs = await res.json();
-               logs.forEach(l => {
-                   if (l.success && l.msg.startsWith('✅')) wbLog(\`✅ \${l.msg.replace('✅ ', '')}\`, 'text-white');
-                   else wbLog(\`[\${l.success ? 'OK' : 'ERR'}] \${l.name}: \${l.msg}\`, l.success ? '' : 'text-red-400');
-               });
-               
-               document.getElementById('batch_deploy_modal').classList.add('hidden');
-               await loadAccounts(); 
-               Swal.fire('完成', '操作完成，请查看工作台', 'success');
+              let hasErr = false;
+              let errMsg = '';
+              logs.forEach(l => {
+                  if (l.success && l.msg.startsWith('✅')) wbLog('✅ ' + l.msg.replace('✅ ', ''), 'text-white');
+                  else {
+                      wbLog('[' + (l.success ? 'OK' : 'ERR') + '] ' + l.name + ': ' + l.msg, l.success ? '' : 'text-red-400');
+                      if (!l.success) { hasErr = true; errMsg += l.name + ': ' + l.msg + '\\\n'; }
+                  }
+              });
+              
+              document.getElementById('batch_deploy_modal').classList.add('hidden');
+              await loadAccounts(); 
+              if (hasErr) {
+                  showDebugError('批量部署中存在错误', errMsg, { template: t, workerName: name, targetAccounts });
+              } else {
+                  Swal.fire('完成', '全部部署完成，请查看工作台', 'success');
+              }
 
            } catch(e) { 
-               Swal.fire('错误', '部署失败: ' + e.message, 'error'); 
-               wbLog(\`❌ Error: \${e.message}\`, 'text-red-500');
+               showDebugError('批量部署失败', e.message, { template: t, workerName: name });
+               wbLog('❌ Error: ' + e.message, 'text-red-500');
            }
           btn.disabled = false;
           btn.innerText = "🚀 开始部署";
@@ -1796,14 +2329,12 @@ function mainHtml() {
           if (t === 'joey') kvCheck.checked = false; else kvCheck.checked = true;
       }
 
-
-
       let currentManageAccIndex = -1;
 
       async function openAccountManage(i) {
           currentManageAccIndex = i;
           const acc = accounts[i];
-          if (!acc.globalKey) return Swal.fire('无法管理', '请先配置 Global API Key', 'error');
+          if (!acc.apiToken && !acc.globalKey) return Swal.fire('无法管理', '请先配置 API Token 或 Global API Key', 'error');
 
           const modal = document.getElementById('account_manage_modal');
           const table = document.getElementById('manage_table');
@@ -1811,27 +2342,27 @@ function mainHtml() {
           const loading = document.getElementById('manage_loading');
           const subDisplay = document.getElementById('manage_subdomain_display');
           
-          document.getElementById('manage_modal_title').innerText = \`📂 管理账号: \${acc.alias}\`;
+          document.getElementById('manage_modal_title').innerText = '📂 管理账号: ' + acc.alias;
           subDisplay.innerText = '加载中...';
           modal.classList.remove('hidden');
           table.classList.add('hidden');
           loading.classList.remove('hidden');
           tbody.innerHTML = '';
 
-          // 并行加载 Workers 列表和子域名
+          const payload = { accountId: acc.accountId, email: acc.email, globalKey: acc.globalKey, apiToken: acc.apiToken };
+
           try {
               const [workersRes, subRes] = await Promise.all([
                   fetch('/api/all_workers', {
                       method: 'POST',
-                      body: JSON.stringify({ accountId: acc.accountId, email: acc.email, globalKey: acc.globalKey })
+                      body: JSON.stringify(payload)
                   }),
                   fetch('/api/get_subdomain', {
                       method: 'POST',
-                      body: JSON.stringify({ accountId: acc.accountId, email: acc.email, globalKey: acc.globalKey })
+                      body: JSON.stringify(payload)
                   })
               ]);
               
-              // 处理子域名
               const subData = await subRes.json();
               if (subData.success && subData.subdomain) {
                   subDisplay.innerText = subData.subdomain;
@@ -1839,7 +2370,6 @@ function mainHtml() {
                   subDisplay.innerText = subData.msg || '未设置';
               }
 
-              // 处理 Workers 列表
               const d = await workersRes.json();
               loading.classList.add('hidden');
               
@@ -1861,9 +2391,13 @@ function mainHtml() {
                   }
               } else {
                   tbody.innerHTML = \`<tr><td colspan="4" class="text-center text-red-500 py-4">\${d.msg}</td></tr>\`;
-                  table.classList.remove('hidden');
+                  table.classList.add('hidden');
+                  showDebugError('账号 Worker 列表读取失败', d.msg, { accountAlias: acc.alias });
               }
-          } catch(e) { loading.innerText = "网络错误"; }
+          } catch(e) { 
+              loading.innerText = "网络错误"; 
+              showDebugError('管理接口连接异常', e.message, { accountAlias: acc.alias });
+          }
       }
 
       async function promptChangeSubdomain() {
@@ -1899,7 +2433,7 @@ function mainHtml() {
 
           const confirm2 = await Swal.fire({
               title: '二次确认',
-              html: \`确定将子域名从 <b>\${currentSub}</b> 改为 <b>\${newSub}</b> 吗？<br><span class="text-xs text-red-500">此操作会影响所有使用 workers.dev 域名的 Worker！</span>\`,
+              html: '确定将子域名从 <b>' + currentSub + '</b> 改为 <b>' + newSub + '</b> 吗？<br><span class="text-xs text-red-500">此操作会影响所有使用 workers.dev 域名的 Worker！</span>',
               icon: 'warning',
               showCancelButton: true,
               confirmButtonText: '确认修改',
@@ -1913,17 +2447,17 @@ function mainHtml() {
               Swal.fire({ title: '修改中...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
               const res = await fetch('/api/change_subdomain', {
                   method: 'POST',
-                  body: JSON.stringify({ accountId: acc.accountId, email: acc.email, globalKey: acc.globalKey, newSubdomain: newSub })
+                  body: JSON.stringify({ accountId: acc.accountId, email: acc.email, globalKey: acc.globalKey, apiToken: acc.apiToken, newSubdomain: newSub })
               });
               const data = await res.json();
               if (data.success) {
                   document.getElementById('manage_subdomain_display').innerText = data.subdomain || newSub;
-                  Swal.fire('修改成功', \`子域名已更新为: \${data.subdomain || newSub}.workers.dev\`, 'success');
+                  Swal.fire('修改成功', '子域名已更新为: ' + (data.subdomain || newSub) + '.workers.dev', 'success');
               } else {
-                  Swal.fire('修改失败', data.msg || '未知错误', 'error');
+                  showDebugError('修改子域名失败', data.msg, { accountAlias: acc.alias, newSub });
               }
           } catch(e) {
-              Swal.fire('错误', '网络错误: ' + e.message, 'error');
+              showDebugError('修改子域名网络异常', e.message, { accountAlias: acc.alias, newSub });
           }
       }
 
@@ -1954,13 +2488,14 @@ function mainHtml() {
                           accountId: acc.accountId, 
                           email: acc.email, 
                           globalKey: acc.globalKey, 
+                          apiToken: acc.apiToken,
                           workerName: workerId,
                           deleteKv: deleteKv 
                       })
                   }).then(response => response.json()).then(data => {
                       if (!data.success) throw new Error(data.msg);
                       return data;
-                  }).catch(error => Swal.showValidationMessage(\`删除失败: \${error}\`));
+                  }).catch(error => Swal.showValidationMessage('删除失败: ' + error));
               }
           });
 
@@ -1973,37 +2508,62 @@ function mainHtml() {
 
       function renderTable() {
           const tb = document.getElementById('account_body');
-          if (accounts.length === 0) { tb.innerHTML = '<tr><td colspan="6" class="text-center text-gray-300 py-4">无数据</td></tr>'; return; }
-          const sortedAccounts = [...accounts].sort((a, b) => b.stats.total - a.stats.total);
+          const badge = document.getElementById('account_count_badge');
+          if (badge) badge.innerText = accounts.length + ' 个已配置账号';
+          
+          if (accounts.length === 0) { 
+              tb.innerHTML = '<tr><td colspan="6" class="text-center text-slate-400 py-8 text-xs">暂无配置账号，请点击右上角「➕ 添加账号」</td></tr>'; 
+              return; 
+          }
+          const sortedAccounts = [...accounts].sort((a, b) => (b.stats ? b.stats.total : 0) - (a.stats ? a.stats.total : 0));
           tb.innerHTML = sortedAccounts.map((a) => {
               const originalIndex = accounts.findIndex(acc => acc.alias === a.alias);
               const count = (a.workers_cmliu||[]).length + (a.workers_joey||[]).length + (a.workers_ech||[]).length;
-              const percent = ((a.stats.total / a.stats.max) * 100).toFixed(1);
-              let barColor = 'bg-green-500'; if (percent > 80) barColor = 'bg-orange-500'; if (percent >= 100) barColor = 'bg-red-600';
-              const zoneBadge = a.defaultZoneName ? \`<span class="bg-purple-100 text-purple-600 text-[10px] px-1 rounded">\${a.defaultZoneName}</span>\` : '<span class="text-gray-300">-</span>';
-              return \`<tr class="hover:bg-gray-50 border-b">
-                  <td class="font-medium">\${a.alias}</td>
-                  <td>\${zoneBadge}</td>
-                  <td><span class="text-xs bg-gray-100 text-gray-600 rounded px-1.5 py-0.5">\${count} 个</span></td>
-                  <td>\${a.stats.total}</td>
-                  <td><div class="flex items-center gap-2"><div class="w-12 bg-gray-200 rounded-full h-1.5 overflow-hidden"><div class="\${barColor} h-1.5" style="width: \${Math.min(percent, 100)}%"></div></div><span class="text-[10px]">\${percent}%</span></div></td>
-                  <td class="text-right">
-                      <button onclick="openAccountManage(\${originalIndex})" class="text-purple-600 mr-2 text-xs font-bold hover:bg-purple-50 px-1 rounded">📂 管理</button>
-                      <button onclick="editAccount(\${originalIndex})" class="text-blue-500 mr-2 text-xs">✎</button>
-                      <button onclick="delAccount(\${originalIndex})" class="text-red-500 text-xs">×</button>
-                  </td>
-              </tr>\`;
+              const totalReq = a.stats ? a.stats.total : 0;
+              const maxReq = a.stats ? a.stats.max : 100000;
+              const percent = ((totalReq / maxReq) * 100).toFixed(1);
+              
+              let barColor = 'bg-emerald-500'; 
+              let tagColor = 'el-tag-green';
+              if (percent > 70) { barColor = 'bg-amber-500'; tagColor = 'el-tag-orange'; }
+              if (percent >= 90) { barColor = 'bg-rose-500'; tagColor = 'el-tag-red'; }
+              
+              const zoneBadge = a.defaultZoneName ? ('<span class="el-tag el-tag-purple font-mono">' + a.defaultZoneName + '</span>') : '<span class="text-slate-300">-</span>';
+              
+              return '<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50">' +
+                  '<td class="font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1.5">' +
+                      '<span>🔑</span>' + a.alias +
+                  '</td>' +
+                  '<td>' + zoneBadge + '</td>' +
+                  '<td><span class="el-tag el-tag-blue font-mono font-bold">' + count + ' 个</span></td>' +
+                  '<td class="font-mono text-xs font-semibold">' + totalReq.toLocaleString() + '</td>' +
+                  '<td>' +
+                      '<div class="flex items-center gap-2">' +
+                          '<div class="w-16 bg-slate-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden">' +
+                              '<div class="' + barColor + ' h-2 transition-all duration-500" style="width: ' + Math.min(percent, 100) + '%"></div>' +
+                          '</div>' +
+                          '<span class="el-tag ' + tagColor + ' text-[10px]">' + percent + '%</span>' +
+                      '</div>' +
+                  '</td>' +
+                  '<td class="text-right space-x-1">' +
+                      '<button onclick="openAccountManage(' + originalIndex + ')" class="el-btn el-btn-default el-btn-xs font-bold text-indigo-600 hover:text-indigo-700">📂 管理</button>' +
+                      '<button onclick="editAccount(' + originalIndex + ')" class="el-btn el-btn-default el-btn-xs">✏️ 编辑</button>' +
+                      '<button onclick="delAccount(' + originalIndex + ')" class="el-btn el-btn-default el-btn-xs text-rose-500 hover:text-rose-600">🗑️</button>' +
+                  '</td>' +
+              '</tr>';
           }).join('');
       }
 
       async function loadAccounts() { try { const r = await fetch('/api/accounts'); accounts = await r.json(); accounts.forEach(a => a.stats = a.stats || {total:0,max:100000}); renderTable(); } catch(e){} }
       
       async function saveAccount() { 
+          const isToken = document.querySelector('input[name="auth_mode"]:checked')?.value === 'token';
           const o={
-              alias:document.getElementById('in_alias').value,
-              accountId:document.getElementById('in_id').value,
-              email:document.getElementById('in_email').value,
-              globalKey:document.getElementById('in_gkey').value,
+              alias:document.getElementById('in_alias').value.trim(),
+              accountId:document.getElementById('in_id').value.trim(),
+              apiToken:isToken ? document.getElementById('in_api_token').value.trim() : (document.getElementById('in_api_token').value.trim() || undefined),
+              email:!isToken ? document.getElementById('in_email').value.trim() : (document.getElementById('in_email').value.trim() || undefined),
+              globalKey:!isToken ? document.getElementById('in_gkey').value.trim() : (document.getElementById('in_gkey').value.trim() || undefined),
               defaultZoneName:document.getElementById('in_zone_name').value,
               defaultZoneId:document.getElementById('in_zone_id').value,
               stats:(editingIndex>=0 && accounts[editingIndex]) ? (accounts[editingIndex].stats || {total:0,max:100000}) : {total:0,max:100000}
@@ -2017,13 +2577,20 @@ function mainHtml() {
 
       function editAccount(i){ 
           editingIndex=i; const a=accounts[i]; 
-          document.getElementById('in_alias').value=a.alias; 
-          document.getElementById('in_id').value=a.accountId; 
+          document.getElementById('in_alias').value=a.alias||""; 
+          document.getElementById('in_id').value=a.accountId||""; 
+          document.getElementById('in_api_token').value=a.apiToken||"";
           document.getElementById('in_email').value=a.email||""; 
           document.getElementById('in_gkey').value=a.globalKey||""; 
           document.getElementById('in_zone_name').value=a.defaultZoneName||""; 
           document.getElementById('in_zone_id').value=a.defaultZoneId||""; 
           
+          const hasToken = !!a.apiToken;
+          const radioToken = document.querySelector('input[name="auth_mode"][value="token"]');
+          const radioKey = document.querySelector('input[name="auth_mode"][value="key"]');
+          if (hasToken) { radioToken.checked = true; } else { radioKey.checked = true; }
+          toggleAuthFields();
+
           const select = document.getElementById('in_zone_select');
           if(a.defaultZoneName) { select.innerHTML = \`<option value="\${a.defaultZoneId}" data-name="\${a.defaultZoneName}" selected>\${a.defaultZoneName}</option>\`; } else { select.innerHTML = '<option value="">(请点击读取)</option>'; }
 
@@ -2032,11 +2599,18 @@ function mainHtml() {
       }
 
       async function delAccount(i){ if(confirm('删除账号配置？')){ accounts.splice(i,1); await fetch('/api/accounts',{method:'POST',body:JSON.stringify(accounts)}); renderTable(); } }
-      function resetFormForAdd(){ editingIndex=-1; document.querySelectorAll('#account_form input').forEach(i=>i.value=''); document.getElementById('in_zone_select').innerHTML='<option value="">(请先填写API信息后点击读取)</option>'; document.getElementById('account_form').classList.remove('hidden'); }
+      function resetFormForAdd(){ 
+          editingIndex=-1; 
+          document.querySelectorAll('#account_form input').forEach(i=>{ if(i.type!=='radio') i.value=''; }); 
+          document.querySelector('input[name="auth_mode"][value="token"]').checked = true;
+          toggleAuthFields();
+          document.getElementById('in_zone_select').innerHTML='<option value="">(请先填写API信息后点击读取)</option>'; 
+          document.getElementById('account_form').classList.remove('hidden'); 
+      }
       function cancelEdit(){ document.getElementById('account_form').classList.add('hidden'); }
       async function deleteFromEdit(){ if(editingIndex>=0)delAccount(editingIndex); cancelEdit(); }
       async function loadStats(){ const b=document.getElementById('btn_stats'); b.disabled=true; try{ const r=await fetch('/api/stats'); const d=await r.json(); accounts.forEach(a=>{ const s=d.find(x=>x.alias===a.alias); a.stats=s&&!s.error?s:{total:0,max:100000}; }); renderTable(); }catch(e){} b.disabled=false; }
-      
+
       function toggleEchToken() {
           const enabled = document.getElementById('ech_token_enabled').checked;
           const input = document.getElementById('ech_token_input');
@@ -2058,7 +2632,6 @@ function mainHtml() {
          const btn = document.getElementById('btn_deploy_' + t); const ot = btn.innerText; btn.innerText = '⏳ 部署中...'; btn.disabled = true;
          const vars = []; document.querySelectorAll('.var-row-' + t).forEach(r => { const k = r.querySelector('.key').value; const v = r.querySelector('.val').value; if(k) vars.push({key: k, value: v}); });
 
-         // ECH Token 处理：开关开启且有 token 值，则把 TOKEN 加入 vars
          let echTokenEnabled = false;
          let echDisableWorkersDev = false;
          if (t === 'ech') {
@@ -2080,10 +2653,21 @@ function mainHtml() {
          try {
              const res = await fetch('/api/deploy?type=' + t, { method: 'POST', body: JSON.stringify({ type: t, variables: vars, deletedVariables: deletedVars[t], targetSha: sha, echTokenEnabled: echTokenEnabled, echDisableWorkersDev: echDisableWorkersDev }) });
              const logs = await res.json();
-             logs.forEach(l => wbLog('[' + (l.success ? 'OK' : 'ERR') + '] ' + l.name + ': ' + l.msg, l.success ? '' : 'text-red-400'));
+             let hasErr = false;
+             let errMsg = '';
+             logs.forEach(l => {
+                 wbLog('[' + (l.success ? 'OK' : 'ERR') + '] ' + l.name + ': ' + l.msg, l.success ? '' : 'text-red-400');
+                 if (!l.success) { hasErr = true; errMsg += l.name + ': ' + l.msg + '\\\n'; }
+             });
              deletedVars[t] = [];
+             if (hasErr) {
+                 showDebugError('部署过程存在错误', errMsg, { template: t, targetSha: sha });
+             }
              setTimeout(() => { checkUpdate(t); checkDeployConfig(t); }, 1000);
-         } catch(e) { wbLog('Error: ' + e.message, 'text-red-500'); }
+         } catch(e) { 
+             wbLog('Error: ' + e.message, 'text-red-500'); 
+             showDebugError('部署执行失败', e.message, { template: t });
+         }
          btn.innerText = ot; btn.disabled = false;
       }
 
@@ -2102,13 +2686,22 @@ function mainHtml() {
           try {
               const res = await fetch('/api/fix_1101', { method: 'POST', body: JSON.stringify({ type: t }) });
               const logs = await res.json();
+              let hasErr = false;
+              let errMsg = '';
               logs.forEach(l => {
                   const color = l.success ? 'text-green-300' : 'text-red-400';
                   wbLog('[' + (l.success ? '✅' : '❌') + '] ' + l.name, color);
                   if (l.msg) l.msg.split(' | ').forEach(s => wbLog('   ' + s, 'text-slate-400'));
+                  if (!l.success) { hasErr = true; errMsg += l.name + ': ' + l.msg + '\\\n'; }
               });
+              if (hasErr) {
+                  showDebugError('1101 修复过程存在异常', errMsg, { template: t });
+              }
               setTimeout(() => { checkUpdate(t); checkDeployConfig(t); }, 1000);
-          } catch(e) { wbLog('Error: ' + e.message, 'text-red-500'); }
+          } catch(e) { 
+              wbLog('Error: ' + e.message, 'text-red-500'); 
+              showDebugError('1101 修复接口异常', e.message, { template: t });
+          }
           btn.innerText = ot; btn.disabled = false;
       }
 
@@ -2132,7 +2725,7 @@ function mainHtml() {
           if (!confirm('确认覆盖当前变量配置?')) return;
           const r = await fetch('/api/fetch_bindings', {
               method: 'POST',
-              body: JSON.stringify({ accountId: a.accountId, email: a.email, globalKey: a.globalKey, workerName: n })
+              body: JSON.stringify({ accountId: a.accountId, email: a.email, globalKey: a.globalKey, apiToken: a.apiToken, workerName: n })
           });
           const d = await r.json();
           if (d.success) {
@@ -2140,12 +2733,57 @@ function mainHtml() {
               c.innerHTML = ''; deletedVars[t] = [];
               d.data.forEach(v => addVarRow(t, v.key, v.value));
               Swal.fire('同步成功', '变量已更新', 'success');
-          } else { Swal.fire('同步失败', d.msg, 'error'); }
+          } else { 
+              showDebugError('同步变量失败', d.msg, { accountAlias: a.alias, workerName: n });
+          }
       }
 
-      function renderProxySelector(){ const c=document.getElementById('ech_proxy_selector_container'); let h='<select id="ech_proxy_select" onchange="applyEchProxy()" class="w-full text-xs border rounded p-1 mb-1"><option value="">-- Select ProxyIP --</option>'; ECH_PROXIES.forEach(g=>{ h+=\`<optgroup label="\${g.group}">\`; g.list.forEach(i=>h+=\`<option value="\${i.split(' ')[0]}">\${i}</option>\`); h+='</optgroup>'; }); c.innerHTML=h+'</select>'; }
+      function renderProxySelector(){ 
+          const c=document.getElementById('ech_proxy_selector_container'); 
+          let h='<select id="ech_proxy_select" onchange="applyEchProxy()" class="w-full text-xs border rounded p-1 mb-1"><option value="">-- 选择 ProxyIP 节点 --</option>'; 
+          ECH_PROXIES.forEach(g=>{ 
+              h+=\`<optgroup label="\${g.group}">\`; 
+              g.list.forEach(i=>h+=\`<option value="\${i.split(' ')[0]}">\${i}</option>\`); 
+              h+='</optgroup>'; 
+          }); 
+          c.innerHTML=h+'</select>'; 
+      }
       function applyEchProxy(){ const v=document.getElementById('ech_proxy_select').value; if(v)addVarRow('ech','PROXYIP',v); }
-      function addVarRow(t,k='',v=''){ const c=document.getElementById(\`vars_\${t}\`); const d=document.createElement('div'); d.className=\`flex gap-1 items-center mb-1 var-row-\${t}\`; let h=''; if(t==='cmliu'&&(k==='PROXYIP'||k==='DOH')){ const options=k==='DOH'?["https://dns.jhb.ovh/joeyblog","https://doh.cmliussss.com/CMLiussss","cloudflare-ech.com"]:ECH_PROXIES.flatMap(g=>g.list); h=\`<select onchange="this.previousElementSibling.value=this.value" class="w-4 border rounded text-[8px] bg-gray-50 cursor-pointer"><option>▼</option>\${options.map(u=>\`<option value="\${u.split(' ')[0]}">\${u}</option>\`).join('')}</select>\`; } d.innerHTML=\`<input class="input-field w-1/3 key font-bold" placeholder="Key" value="\${k}"><input class="input-field w-2/3 val" placeholder="Val" value="\${v}">\${h}<button onclick="removeVarRow(this,'\${t}')" class="text-gray-300 hover:text-red-500 px-1 font-bold">×</button>\`; c.appendChild(d); }
+      function addVarRow(t, k = '', v = '') {
+          const c = document.getElementById('vars_' + t);
+          if (!c) return;
+          const d = document.createElement('div');
+          d.className = 'flex gap-2 items-center mb-1.5 var-row-' + t;
+          
+          const keyInput = document.createElement('input');
+          keyInput.className = 'el-input w-1/3 key font-bold font-mono text-xs';
+          keyInput.placeholder = 'Variable Key';
+          keyInput.value = k;
+          d.appendChild(keyInput);
+
+          const valInput = document.createElement('input');
+          valInput.className = 'el-input w-2/3 val font-mono text-xs';
+          valInput.placeholder = 'Value';
+          valInput.value = v;
+          d.appendChild(valInput);
+
+          if (t === 'cmliu' && (k === 'PROXYIP' || k === 'DOH')) {
+              const options = k === 'DOH' ? ["https://dns.jhb.ovh/joeyblog", "https://doh.cmliussss.com/CMLiussss", "cloudflare-ech.com"] : ECH_PROXIES.flatMap(g => g.list);
+              const select = document.createElement('select');
+              select.className = 'el-input py-1 px-1.5 w-8 text-xs cursor-pointer';
+              select.innerHTML = '<option>▼</option>' + options.map(u => '<option value="' + u.split(' ')[0] + '">' + u + '</option>').join('');
+              select.onchange = () => { valInput.value = select.value; };
+              d.appendChild(select);
+          }
+
+          const delBtn = document.createElement('button');
+          delBtn.className = 'el-btn el-btn-default el-btn-xs text-rose-500 hover:bg-rose-50 font-bold px-2';
+          delBtn.textContent = '×';
+          delBtn.onclick = () => removeVarRow(delBtn, t);
+          d.appendChild(delBtn);
+
+          c.appendChild(d);
+      }
       function removeVarRow(b,t){ const k=b.parentElement.querySelector('.key').value; if(k)deletedVars[t].push(k); b.parentElement.remove(); }
       async function loadVars(t){ const c=document.getElementById(\`vars_\${t}\`); c.innerHTML='<div class="text-center text-gray-300">...</div>'; try{ const r=await fetch(\`/api/settings?type=\${t}\`); const v=await r.json(); const m=new Map(); if(Array.isArray(v))v.forEach(x=>m.set(x.key,x.value)); TEMPLATES[t].defaultVars.forEach(k=>{ if(!m.has(k))m.set(k,k===TEMPLATES[t].uuidField?crypto.randomUUID():'') }); c.innerHTML=''; deletedVars[t]=[]; m.forEach((val,key)=>addVarRow(t,key,val)); }catch(e){ c.innerHTML='Load Error'; } }
       
@@ -2188,7 +2826,7 @@ function mainHtml() {
       function refreshUUID(t){ const k=TEMPLATES[t].uuidField; if(k)document.querySelectorAll(\`.var-row-\${t}\`).forEach(r=>{ if(r.querySelector('.key').value===k){ const i=r.querySelector('.val'); i.value=crypto.randomUUID(); i.classList.add('bg-green-100'); setTimeout(()=>i.classList.remove('bg-green-100'),500); } }); }
       async function checkDeployConfig(t){ try{ const r=await fetch(\`/api/deploy_config?type=\${t}\`); const c=await r.json(); deployConfigs[t]=c; const b=document.getElementById(\`badge_\${t}\`); if(c.mode==='fixed'){ b.className="text-[9px] px-1.5 py-0.5 rounded text-white bg-orange-500 font-bold"; b.innerText="🔒 Locked"; }else{ b.className="text-[9px] px-1.5 py-0.5 rounded text-white bg-green-500"; b.innerText="Auto Update"; } }catch(e){} }
 
-      // 历史记录 & 收藏 (新版逻辑)
+      // 历史记录 & 收藏
       async function openVersionHistory(type){ currentHistoryType=type; refreshHistory(); }
       async function refreshHistory() {
           const type = currentHistoryType; if(!type) return;
@@ -2205,7 +2843,6 @@ function mainHtml() {
             const[histRes,favRes]=await Promise.all([fetch(\`/api/check_update?type=\${type}&mode=history&limit=\${limit}\`),fetch(\`/api/favorites?type=\${type}\`)]);
             const histData=await histRes.json();const favData=await favRes.json();
             
-            // 收藏夹渲染逻辑移到 openFavoritesPanel
             window.currentFavData = favData || [];
 
             hList.innerHTML='';
@@ -2222,7 +2859,10 @@ function mainHtml() {
                     renderHistoryItem(type,item,hList,false,isFav);
                 });
             }
-          }catch(e){hList.innerHTML='<div class="text-red-400 text-xs">网络错误: ' + e.message + '</div>';}
+          }catch(e){
+              hList.innerHTML='<div class="text-red-400 text-xs">网络错误: ' + e.message + '</div>';
+              showDebugError('拉取版本历史失败', e.message, { template: type });
+          }
       }
 
       function openFavoritesPanel() {
@@ -2273,10 +2913,8 @@ function mainHtml() {
       
       async function toggleFavorite(type,item,isRemove){
           await fetch(\`/api/favorites?type=\${type}\`,{method:'POST',body:JSON.stringify({action:isRemove?'remove':'add',item:item})});
-          // 刷新数据
           const r = await fetch(\`/api/favorites?type=\${type}\`);
           window.currentFavData = await r.json();
-          // 如果在收藏面板，重新渲染收藏列表；如果在历史面板，刷新历史
           if(!document.getElementById('fav_panel_view').classList.contains('hidden')) {
               openFavoritesPanel();
           } else {
@@ -2299,7 +2937,6 @@ function mainHtml() {
           resize();
           window.addEventListener('resize', resize);
           
-          // 生成星星
           function createStars() {
               stars = [];
               const count = Math.floor((canvas.width * canvas.height) / 3000);
@@ -2317,7 +2954,6 @@ function mainHtml() {
           createStars();
           window.addEventListener('resize', createStars);
 
-          // 流星
           function maybeShootingStar() {
               if (Math.random() < 0.008 && shootingStars.length < 3) {
                   shootingStars.push({
@@ -2332,7 +2968,6 @@ function mainHtml() {
           
           function draw() {
               ctx.clearRect(0, 0, canvas.width, canvas.height);
-              // 深空渐变背景
               const grad = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 0, canvas.width/2, canvas.height/2, canvas.width*0.7);
               grad.addColorStop(0, '#0f172a');
               grad.addColorStop(0.5, '#0c1222');
@@ -2340,7 +2975,6 @@ function mainHtml() {
               ctx.fillStyle = grad;
               ctx.fillRect(0, 0, canvas.width, canvas.height);
               
-              // 星云光晕
               const nebula = ctx.createRadialGradient(canvas.width * 0.2, canvas.height * 0.3, 0, canvas.width * 0.2, canvas.height * 0.3, 300);
               nebula.addColorStop(0, 'rgba(139, 92, 246, 0.03)');
               nebula.addColorStop(1, 'transparent');
@@ -2353,7 +2987,6 @@ function mainHtml() {
               ctx.fillStyle = nebula2;
               ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-              // 绘制星星
               for (const s of stars) {
                   s.alpha += s.delta;
                   if (s.alpha <= 0.1 || s.alpha >= 1) s.delta = -s.delta;
@@ -2365,7 +2998,6 @@ function mainHtml() {
               }
               ctx.globalAlpha = 1;
               
-              // 流星
               maybeShootingStar();
               shootingStars = shootingStars.filter(m => {
                   m.x += m.speed; m.y += m.speed * 0.6; m.alpha -= 0.015;
@@ -2425,6 +3057,14 @@ function mainHtml() {
           }
       }
 
+      
+      function yxipSelectAllAccounts() {
+          document.querySelectorAll('input[name="yxip_account"]:not([disabled])').forEach(c => c.checked = true);
+      }
+      function yxipDeselectAllAccounts() {
+          document.querySelectorAll('input[name="yxip_account"]').forEach(c => c.checked = false);
+      }
+
       function toggleYxipAccountSelect() {
           const type = document.getElementById('yxip_type').value;
           const accountArea = document.getElementById('yxip_cmliu_account_area');
@@ -2438,7 +3078,7 @@ function mainHtml() {
           const targetArrName = type === 'cmliu' ? 'workers_cmliu' : 'workers_joey';
           const targetNameStr = type === 'cmliu' ? 'CMLiu' : 'Joey';
           
-          const btnHtml = '<div class="col-span-full flex gap-2 mb-1"><button onclick="document.querySelectorAll(\\\'input[name=yxip_account]:not([disabled])\\\').forEach(c=>c.checked=true)" class="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">全选有效账号</button><button onclick="document.querySelectorAll(\\\'input[name=yxip_account]\\\').forEach(c=>c.checked=false)" class="text-xs bg-gray-100 text-gray-500 px-2 py-1 rounded">反选所有账号</button></div>';
+          const btnHtml = '<div class="col-span-full flex gap-2 mb-1"><button type="button" onclick="yxipSelectAllAccounts()" class="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">全选有效账号</button><button type="button" onclick="yxipDeselectAllAccounts()" class="text-xs bg-gray-100 text-gray-500 px-2 py-1 rounded">反选所有账号</button></div>';
           
           accountList.className = 'max-h-[150px] overflow-y-auto border rounded p-3 bg-white grid grid-cols-1 md:grid-cols-2 gap-2 shadow-inner ' + borderCls;
           accountList.innerHTML = btnHtml + accounts.map(a => {
@@ -2449,7 +3089,7 @@ function mainHtml() {
               const disabledAttr = noWorker ? 'disabled' : '';
               return '<label class="flex items-center gap-2 p-2 border rounded cursor-pointer transition-colors ' + bgHoverCls + ' ' + opacityClass + '">' +
                   '<input type="checkbox" name="yxip_account" value="' + a.accountId + '" class="' + txtCls + '" ' + disabledAttr + '>' +
-                  '<span class="text-xs font-bold text-gray-700 truncate" title="' + a.email + '">' + a.email + '</span>' +
+                  '<span class="text-xs font-bold text-gray-700 truncate" title="' + a.email + '">' + (a.alias || a.email) + '</span>' +
                   badge +
               '</label>';
           }).join('');
@@ -2466,9 +3106,11 @@ function mainHtml() {
                   renderYxipRegions();
               } else {
                   container.innerHTML = '<div class="col-span-full text-center py-4 text-red-500">❌ 获取失败: ' + data.msg + '</div>';
+                  showDebugError('全球优选节点获取失败', data.msg);
               }
           } catch(e) {
               container.innerHTML = '<div class="col-span-full text-center py-4 text-red-500">❌ 网络异常，获取节点数据失败</div>';
+              showDebugError('全球优选节点接口网络异常', e.message);
           }
       }
 
@@ -2534,12 +3176,11 @@ function mainHtml() {
           const btnIcon = document.getElementById('yxip_btn_icon');
           btnIcon.innerHTML = '<svg class="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
           
-          // 组装内容
           const regionCounters = {};
           const results = [];
           
           for (const region of yxipSelected) {
-              const ipList = shuffleArray([...yxipData[region]]); // 深拷贝并打乱
+              const ipList = shuffleArray([...yxipData[region]]);
               const toTake = Math.min(limit, ipList.length);
               
               for (let i = 0; i < toTake; i++) {
@@ -2554,7 +3195,7 @@ function mainHtml() {
               }
           }
           
-          const rawContent = type.startsWith('joey') ? results.join(',') : results.join('\\n');
+          const rawContent = type.startsWith('joey') ? results.join(',') : results.join('\\\n');
           
           try {
               document.getElementById('yxip_modal').classList.add('hidden');
@@ -2592,6 +3233,7 @@ function mainHtml() {
                       deployLogs.forEach(l => wbLog('[' + (l.success ? '部署OK' : '报错') + '] ' + l.name + ': ' + l.msg, l.success ? 'text-green-300' : 'text-red-400'));
                   } catch (e) {
                       wbLog('⚠️ 下发变量部署失败: ' + e.message, 'text-red-500');
+                      showDebugError('下发变量部署失败', e.message, { type: 'joey_var' });
                   }
               } else {
                   for (let i = 0; i < targetAccounts.length; i++) {
@@ -2605,6 +3247,7 @@ function mainHtml() {
                               accountId: acc.accountId,
                               email: acc.email,
                               globalKey: acc.globalKey,
+                              apiToken: acc.apiToken,
                               rawContent
                           })
                       });
@@ -2626,18 +3269,17 @@ function mainHtml() {
               }
 
           } catch (e) {
-              alert('请求异常：' + e.message);
+              showDebugError('反代落地部署异常', e.message, { type: type });
           } finally {
               btnIcon.innerHTML = '⚡';
           }
       }
-      // ==================================================
 
       function applyTheme() {
           const saved = localStorage.getItem('worker_theme');
           if (saved === 'dark') {
               document.documentElement.setAttribute('data-theme', 'dark');
-              document.getElementById('theme_btn').innerText = '\u2600\ufe0f';
+              document.getElementById('theme_btn').innerText = '☀️';
               initStarfield();
           }
       }
